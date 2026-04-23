@@ -443,6 +443,40 @@ func (s *CdnUploadService) UploadMediaForDeploy(ctx context.Context, appDir stri
 	res.Success = successCount
 	res.Failures = failures
 
+	// 清理孤儿（PR #96 / issue #47）：manifest 中有、但本次扫描不存在的 remotePath。
+	// 只基于 manifest 做对比，不做"列整库 diff"，天然安全：
+	// 如果用户在同一个 CDN 仓库里还有其它非 Gridea 上传的文件，不会被误删。
+	localSet := make(map[string]struct{}, len(filesToUpload))
+	for _, f := range filesToUpload {
+		localSet[f.remotePath] = struct{}{}
+	}
+	var orphans []string
+	for remotePath := range manifest.Entries {
+		if _, exists := localSet[remotePath]; !exists {
+			orphans = append(orphans, remotePath)
+		}
+	}
+	if len(orphans) > 0 {
+		logger(fmt.Sprintf("检测到 %d 个 CDN 孤儿文件（本地已删除但 CDN 仍存在），开始清理...", len(orphans)))
+		deleted := 0
+		for _, remotePath := range orphans {
+			if err := ctx.Err(); err != nil {
+				return res, err
+			}
+			if err := s.deleteFromGitHub(ctx, setting, remotePath); err != nil {
+				// 单文件删除失败不阻塞：下次部署还会再尝试
+				logger(fmt.Sprintf("清理 %s 失败（将下次重试）: %v", remotePath, err))
+				continue
+			}
+			manifest.mu.Lock()
+			delete(manifest.Entries, remotePath)
+			manifest.mu.Unlock()
+			deleted++
+		}
+		logger(fmt.Sprintf("CDN 孤儿清理完成：成功删除 %d / %d 个文件", deleted, len(orphans)))
+	}
+
+	// 上传汇总（PR #88 / issue #44）
 	if len(failures) == 0 {
 		logger(fmt.Sprintf("CDN 上传完成，共上传 %d 个文件", res.Success))
 	} else {
@@ -459,6 +493,56 @@ func (s *CdnUploadService) UploadMediaForDeploy(ctx context.Context, appDir stri
 		}
 	}
 	return res, nil
+}
+
+// deleteFromGitHub 从 GitHub CDN 仓库里删除一个已上传的文件。
+// 先 GET 当前 SHA，再 DELETE（Contents API 要求提供 sha 防覆盖冲突）。
+func (s *CdnUploadService) deleteFromGitHub(ctx context.Context, setting domain.CdnSetting, remotePath string) error {
+	branch := setting.GithubBranch
+	if branch == "" {
+		branch = "main"
+	}
+
+	// 1. 拿远端 SHA；404 认为已经不存在，视作删除成功
+	sha, err := s.getGithubFileSHA(ctx, setting, remotePath, branch)
+	if err != nil {
+		// getGithubFileSHA 把"文件不存在"当成 error —— 这里视作孤儿已消失
+		return nil
+	}
+
+	// 2. DELETE 请求
+	body := map[string]any{
+		"message": fmt.Sprintf("Delete orphan %s via Gridea Pro", remotePath),
+		"sha":     sha,
+		"branch":  branch,
+	}
+	bodyJSON, _ := json.Marshal(body)
+
+	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/contents/%s",
+		setting.GithubUser, setting.GithubRepo, remotePath)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, url, strings.NewReader(string(bodyJSON)))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+setting.GithubToken)
+	req.Header.Set("Accept", "application/vnd.github.v3+json")
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := s.httpClient(ctx).Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
+		if resp.StatusCode == http.StatusNotFound {
+			return nil // 已消失
+		}
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
+	}
+	return nil
 }
 
 // buildCdnURL 构建 CDN 访问 URL
