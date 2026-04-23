@@ -128,6 +128,114 @@ fill-rule="evenodd" clip-rule="evenodd"
       </div>
     </main>
 
+    <!--
+      部署面板（#43，重新设计）：push 布局的 flex 兄弟节点，而非 fixed 浮层。
+      收起时 width=0（被 overflow-hidden 截断）、展开时 width=380px；主内容通过
+      flex 自动收窄给它腾空间。融入 app 自身调色盘，和左栏视觉对称。
+    -->
+    <aside
+      class="flex-shrink-0 overflow-hidden bg-sidebar border-l border-border transition-[width] duration-300 ease-out"
+      :class="deployPanelVisible ? 'w-[380px]' : 'w-0'">
+      <!-- 内层固定 380px 宽，父层 width 过渡期间不会挤压内容 -->
+      <div class="w-[380px] h-full flex flex-col">
+        <!-- Header -->
+        <div class="px-5 py-4 border-b border-border/60 flex items-start justify-between gap-3">
+          <div class="flex-1 min-w-0">
+            <div class="flex items-center gap-2 mb-1.5">
+              <span
+                v-if="publishLoading"
+                class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-primary/10 text-primary text-[11px] font-medium">
+                <span class="size-1.5 rounded-full bg-primary animate-pulse"></span>
+                部署中
+              </span>
+              <span
+                v-else-if="deployOutcome === 'success'"
+                class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-green-500/10 text-green-600 dark:text-green-400 text-[11px] font-medium">
+                <span class="size-1.5 rounded-full bg-green-500"></span>
+                部署完成
+              </span>
+              <span
+                v-else-if="deployOutcome === 'failed'"
+                class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-destructive/10 text-destructive text-[11px] font-medium">
+                <span class="size-1.5 rounded-full bg-destructive"></span>
+                部署失败
+              </span>
+              <span
+                v-else
+                class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-muted text-muted-foreground text-[11px] font-medium">
+                <span class="size-1.5 rounded-full bg-muted-foreground/40"></span>
+                已取消
+              </span>
+            </div>
+            <div class="text-xs text-muted-foreground truncate">
+              {{ deploySummary }}
+            </div>
+          </div>
+          <button
+            class="size-7 flex-shrink-0 grid place-items-center rounded-full text-muted-foreground hover:text-primary hover:bg-primary/5 transition-colors cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
+            @click="deployPanelVisible = false">
+            <XMarkIcon class="size-4" />
+          </button>
+        </div>
+
+        <!-- 进度条：只有日志里解析到数字才显示 -->
+        <div v-if="deployProgress.total > 0" class="px-5 py-3 border-b border-border/60">
+          <div class="flex items-center justify-between text-[11px] text-muted-foreground mb-2">
+            <span>{{ deployProgress.label }}</span>
+            <span class="font-mono tabular-nums">{{ deployProgress.done }} / {{ deployProgress.total }}</span>
+          </div>
+          <div class="h-1 bg-muted rounded-full overflow-hidden">
+            <div
+              class="h-full bg-primary transition-all duration-300 ease-out"
+              :style="{ width: `${deployProgress.pct}%` }"></div>
+          </div>
+          <div v-if="deployProgress.failed > 0" class="mt-2 flex items-center gap-3 text-[10px]">
+            <span class="text-green-600 dark:text-green-400">
+              ✓ 成功 {{ deployProgress.done - deployProgress.failed }}
+            </span>
+            <span class="text-destructive">✗ 失败 {{ deployProgress.failed }}</span>
+          </div>
+        </div>
+
+        <!-- 日志流 -->
+        <div ref="logScrollEl" class="flex-1 overflow-y-auto py-3 px-4 space-y-1">
+          <div
+            v-for="(entry, idx) in deployLogs"
+            :key="idx"
+            class="flex gap-2.5 text-[11px] leading-5"
+            :class="logLineClass(entry)">
+            <span class="flex-shrink-0 w-3.5 text-center font-mono">{{ logLineIcon(entry) }}</span>
+            <span class="flex-1 break-all font-mono">{{ logLineText(entry) }}</span>
+          </div>
+          <div
+            v-if="publishLoading && deployLogs.length === 0"
+            class="text-[11px] text-muted-foreground italic px-1">
+            等待后端输出...
+          </div>
+        </div>
+
+        <!-- Footer -->
+        <div class="px-4 py-3 border-t border-border/60 bg-muted/30 flex items-center justify-between gap-2">
+          <span class="text-[10px] text-muted-foreground font-mono tabular-nums">
+            {{ deployLogs.length }} 行
+          </span>
+          <div class="flex items-center gap-1">
+            <button
+              class="h-7 px-3 text-[11px] rounded-full text-muted-foreground hover:text-primary hover:bg-primary/5 transition-colors cursor-pointer"
+              @click="copyDeployLogs">
+              复制日志
+            </button>
+            <button
+              v-if="!publishLoading && deployLogs.length > 0"
+              class="h-7 px-3 text-[11px] rounded-full text-muted-foreground hover:text-primary hover:bg-primary/5 transition-colors cursor-pointer"
+              @click="clearDeployLogs">
+              清空
+            </button>
+          </div>
+        </div>
+      </div>
+    </aside>
+
     <!-- Dialogs -->
     <Dialog v-model:open="updateModalVisible">
       <DialogContent class="update-dialog p-0 max-w-[420px] overflow-hidden border-0 shadow-2xl">
@@ -274,119 +382,6 @@ fill-rule="evenodd" clip-rule="evenodd"
       </DialogContent>
     </Dialog>
 
-    <!--
-      部署面板（#43，重新设计）：从右侧滑入的抽屉，是 app 的一部分而不是浮卡。
-      融入 app 自己的暖色调色盘（bg-sidebar / border-border），和左栏视觉对称。
-      结构：状态 chip + 进度条 + 日志流 + 底部操作。
-    -->
-    <Transition
-      enter-active-class="transition-transform duration-300 ease-out"
-      leave-active-class="transition-transform duration-200 ease-in"
-      enter-from-class="translate-x-full"
-      leave-to-class="translate-x-full">
-      <aside
-        v-if="deployPanelVisible"
-        class="fixed top-0 right-0 bottom-0 w-[380px] max-w-[90vw] bg-sidebar border-l border-border z-40 flex flex-col shadow-[-8px_0_24px_-12px_rgba(0,0,0,0.08)]">
-
-        <!-- Header -->
-        <div class="px-5 py-4 border-b border-border/60 flex items-start justify-between gap-3">
-          <div class="flex-1 min-w-0">
-            <div class="flex items-center gap-2 mb-1.5">
-              <!-- 状态 chip：沿用 app 里 connected/configured/notConnected 那套 -->
-              <span
-                v-if="publishLoading"
-                class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-primary/10 text-primary text-[11px] font-medium">
-                <span class="size-1.5 rounded-full bg-primary animate-pulse"></span>
-                部署中
-              </span>
-              <span
-                v-else-if="deployOutcome === 'success'"
-                class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-green-500/10 text-green-600 dark:text-green-400 text-[11px] font-medium">
-                <span class="size-1.5 rounded-full bg-green-500"></span>
-                部署完成
-              </span>
-              <span
-                v-else-if="deployOutcome === 'failed'"
-                class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-destructive/10 text-destructive text-[11px] font-medium">
-                <span class="size-1.5 rounded-full bg-destructive"></span>
-                部署失败
-              </span>
-              <span
-                v-else
-                class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-muted text-muted-foreground text-[11px] font-medium">
-                <span class="size-1.5 rounded-full bg-muted-foreground/40"></span>
-                已取消
-              </span>
-            </div>
-            <div class="text-xs text-muted-foreground truncate">
-              {{ deploySummary }}
-            </div>
-          </div>
-          <button
-            class="size-7 flex-shrink-0 grid place-items-center rounded-full text-muted-foreground hover:text-primary hover:bg-primary/5 transition-colors cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
-            @click="deployPanelVisible = false">
-            <XMarkIcon class="size-4" />
-          </button>
-        </div>
-
-        <!-- 进度条：只有日志里解析到数字才显示 -->
-        <div v-if="deployProgress.total > 0" class="px-5 py-3 border-b border-border/60">
-          <div class="flex items-center justify-between text-[11px] text-muted-foreground mb-2">
-            <span>{{ deployProgress.label }}</span>
-            <span class="font-mono tabular-nums">{{ deployProgress.done }} / {{ deployProgress.total }}</span>
-          </div>
-          <div class="h-1 bg-muted rounded-full overflow-hidden">
-            <div
-              class="h-full bg-primary transition-all duration-300 ease-out"
-              :style="{ width: `${deployProgress.pct}%` }"></div>
-          </div>
-          <div v-if="deployProgress.failed > 0" class="mt-2 flex items-center gap-3 text-[10px]">
-            <span class="text-green-600 dark:text-green-400">
-              ✓ 成功 {{ deployProgress.done - deployProgress.failed }}
-            </span>
-            <span class="text-destructive">✗ 失败 {{ deployProgress.failed }}</span>
-          </div>
-        </div>
-
-        <!-- 日志流：每行带状态前缀 + 颜色，不再是一大团 monospace -->
-        <div ref="logScrollEl" class="flex-1 overflow-y-auto py-3 px-4 space-y-1">
-          <div
-            v-for="(entry, idx) in deployLogs"
-            :key="idx"
-            class="flex gap-2.5 text-[11px] leading-5"
-            :class="logLineClass(entry)">
-            <span class="flex-shrink-0 w-3.5 text-center font-mono">{{ logLineIcon(entry) }}</span>
-            <span class="flex-1 break-all font-mono">{{ logLineText(entry) }}</span>
-          </div>
-          <div
-            v-if="publishLoading && deployLogs.length === 0"
-            class="text-[11px] text-muted-foreground italic px-1">
-            等待后端输出...
-          </div>
-        </div>
-
-        <!-- Footer -->
-        <div
-          class="px-4 py-3 border-t border-border/60 bg-muted/30 flex items-center justify-between gap-2">
-          <span class="text-[10px] text-muted-foreground font-mono tabular-nums">
-            {{ deployLogs.length }} 行
-          </span>
-          <div class="flex items-center gap-1">
-            <button
-              class="h-7 px-3 text-[11px] rounded-full text-muted-foreground hover:text-primary hover:bg-primary/5 transition-colors cursor-pointer"
-              @click="copyDeployLogs">
-              复制日志
-            </button>
-            <button
-              v-if="!publishLoading && deployLogs.length > 0"
-              class="h-7 px-3 text-[11px] rounded-full text-muted-foreground hover:text-primary hover:bg-primary/5 transition-colors cursor-pointer"
-              @click="clearDeployLogs">
-              清空
-            </button>
-          </div>
-        </div>
-      </aside>
-    </Transition>
 
     <Dialog v-model:open="systemModalVisible">
       <DialogContent class="max-w-[800px] overflow-hidden">
