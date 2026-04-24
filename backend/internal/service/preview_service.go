@@ -144,7 +144,17 @@ func (s *PreviewService) StartPreviewServer(ctx context.Context) (string, error)
 		fileServer.ServeHTTP(w, r)
 	})
 
-	// 禁用浏览器缓存，确保主题切换后立即加载最新的 CSS/JS
+	// 预览专属 kill-switch：拦截 /sw.js 返回一个"自杀"SW。
+	//
+	// 背景：主题启用 PWA 后，真实的 sw.js 对静态资源走 cache-first；而预览站的
+	// CSS/JS 是固定名字（main.min.css 等），没 hash busting。于是切主题后重渲
+	// 了新 CSS，浏览器导航仍然从 SW cache 拿到旧 CSS —— 强刷能解除一次但再
+	// 导航又坏。HTTP 层的 Cache-Control 对 SW 的 Cache API 完全无效。
+	//
+	// 预览是开发调试，根本不需要离线 / 缓存。这里永远吐一个立即清 cache +
+	// unregister 自己的 SW，让预览彻底没 PWA。生产部署走的是 Gridea Pro 真
+	// 生成的 sw.js，不受影响。
+	mux.HandleFunc("/sw.js", servePreviewKillSwitchSW)
 	mux.Handle("/", noCacheMiddleware(customHandler))
 
 	s.server = &http.Server{
@@ -236,4 +246,47 @@ func noCacheMiddleware(next http.Handler) http.Handler {
 		w.Header().Set("Expires", "0")
 		next.ServeHTTP(w, r)
 	})
+}
+
+// previewKillSwitchSW 是预览专属的"自杀"Service Worker。
+//
+// 行为：
+//  1. install：跳过 waiting，立即进入 activate
+//  2. activate：枚举所有 caches（包括旧版 PWA SW 留下的）全部删掉，
+//     然后 unregister 自己；如果确实清掉过东西，再让所有受控页面 navigate 自己
+//     触发一次带新资源的重载
+//  3. fetch：一律透传给 network，让预览 server 的 no-cache header 决定
+//
+// 用 `var hadCaches` guard 避免"页面 load → register → navigate → 再 load"
+// 的无限循环：只在第一次（caches 里真的有内容）时重载页面，之后 noop。
+const previewKillSwitchSW = `// Gridea Pro 预览专属 Service Worker（kill-switch）
+// 不要在生产环境使用 —— 本文件只在预览 server 上动态返回。
+self.addEventListener('install', function(e) {
+  self.skipWaiting();
+});
+
+self.addEventListener('activate', function(e) {
+  e.waitUntil((async function() {
+    var keys = await caches.keys();
+    var hadCaches = keys.length > 0;
+    await Promise.all(keys.map(function(k) { return caches.delete(k); }));
+    try { await self.registration.unregister(); } catch (_) {}
+    if (hadCaches) {
+      var clients = await self.clients.matchAll({ type: 'window' });
+      clients.forEach(function(c) { c.navigate(c.url); });
+    }
+  })());
+});
+
+// 所有请求透传到 network —— 预览 server 自己带 Cache-Control: no-cache
+self.addEventListener('fetch', function(e) {
+  e.respondWith(fetch(e.request));
+});
+`
+
+func servePreviewKillSwitchSW(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+	w.Header().Set("Service-Worker-Allowed", "/")
+	_, _ = w.Write([]byte(previewKillSwitchSW))
 }
