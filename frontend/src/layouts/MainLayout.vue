@@ -642,10 +642,10 @@ const preview = () => {
 const publish = async () => {
   if (publishLoading.value) return
   publishLoading.value = true
-  // 每次部署重置面板状态：清空旧日志、切回 running chip、打开面板
+  // 每次部署重置状态：清空旧日志、切回 running 态。
+  // 面板暂时不主动打开（UI 方案重新设计中），数据流和事件订阅保留。
   deployLogs.value = []
   deployOutcome.value = 'running'
-  deployPanelVisible.value = true
 
   try {
     await DeployToGit()
@@ -662,10 +662,8 @@ const publish = async () => {
       deployOutcome.value = 'canceled'
       EventsEmit('app:toast', { message: '已取消发布', type: 'info', duration: 2000 })
     } else {
-      // 失败状态由右侧面板呈现（红色 chip + 完整日志 + 复制按钮），
-      // 不再另开一个 monospace Dialog 砸用户脸上。
       deployOutcome.value = 'failed'
-      EventsEmit('app:toast', { message: '部署失败，详见右侧日志', type: 'error', duration: 3000 })
+      EventsEmit('app:toast', { message: '部署失败', type: 'error', duration: 3000 })
     }
   } finally {
     publishLoading.value = false
