@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -17,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"gridea-pro/backend/internal/deploy"
 	"gridea-pro/backend/internal/domain"
 
 	gonanoid "github.com/matoous/go-nanoid/v2"
@@ -132,8 +134,11 @@ type githubContentsResponse struct {
 	SHA string `json:"sha"`
 }
 
-// uploadToGitHub 通过 GitHub Contents API 上传单个文件
-func (s *CdnUploadService) uploadToGitHub(ctx context.Context, setting domain.CdnSetting, localFilePath, remotePath string) error {
+// uploadToGitHub 通过 GitHub Contents API 上传单个文件。
+// manifest 非 nil 时走本地 manifest 缓存（#45）：若 remotePath 在上次成功上传后
+// 仍是同一个 SHA，直接跳过整个 API 往返；否则仍需一次 GET 查远端 SHA 做增量。
+// 成功上传后向 manifest 记录新的 (remotePath → localSHA)。
+func (s *CdnUploadService) uploadToGitHub(ctx context.Context, setting domain.CdnSetting, localFilePath, remotePath string, manifest *cdnManifest) error {
 	// 读取本地文件
 	data, err := os.ReadFile(localFilePath)
 	if err != nil {
@@ -148,11 +153,33 @@ func (s *CdnUploadService) uploadToGitHub(ctx context.Context, setting domain.Cd
 	// 计算本地文件 SHA（git blob SHA1）
 	localSHA := gitBlobSHA(data)
 
-	// 检查文件是否已存在
+	// 快速路径：本地 manifest 命中且 SHA 未变，直接跳过 API。
+	// 放开这条后大部分"重复部署"场景都不再调用 GitHub API，配额保留给真正的变更。
+	if manifest != nil {
+		if cached, ok := manifest.hit(remotePath); ok && cached == localSHA {
+			return nil
+		}
+	}
+
+	// 慢路径：manifest 未命中或 SHA 变更，还需一次 GET 拿远端 SHA 做增量更新。
+	//   - 内容相同 → 跳过 PUT 并补录 manifest
+	//   - 远端明确不存在（404）→ 走 create 路径（body 不带 sha）
+	//   - 查询失败（限流 / 5xx / 网络）→ 禁止走 create，否则对已有文件发无 sha PUT
+	//     会被 GitHub 拒 422。直接返回错误让调用方记失败，下次 retry
 	existingSHA, err := s.getGithubFileSHA(ctx, setting, remotePath, branch)
-	if err == nil && existingSHA == localSHA {
-		// 文件内容相同，跳过
-		return nil
+	switch {
+	case err == nil:
+		if existingSHA == localSHA {
+			if manifest != nil {
+				manifest.record(remotePath, localSHA)
+			}
+			return nil
+		}
+		// 内容不同，进入下方 PUT with sha 路径
+	case errors.Is(err, errRemoteFileNotFound):
+		// 远端确认不存在，进入 create 路径（existingSHA == ""）
+	default:
+		return err
 	}
 
 	// 构建请求体
@@ -174,15 +201,20 @@ func (s *CdnUploadService) uploadToGitHub(ctx context.Context, setting domain.Cd
 	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/contents/%s",
 		setting.GithubUser, setting.GithubRepo, remotePath)
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPut, url, strings.NewReader(string(bodyJSON)))
-	if err != nil {
-		return fmt.Errorf("创建请求失败: %w", err)
+	// GitHub Contents API 的 PUT 是内容寻址（带 sha），幂等可安全重试（#46）。
+	// 5xx / 429 / 瞬时网络错误自动退避 3 次；429 会尊重 Retry-After 头。
+	buildReq := func() (*http.Request, error) {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPut, url, strings.NewReader(string(bodyJSON)))
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Authorization", "Bearer "+setting.GithubToken)
+		req.Header.Set("Accept", "application/vnd.github.v3+json")
+		req.Header.Set("Content-Type", "application/json")
+		return req, nil
 	}
-	req.Header.Set("Authorization", "Bearer "+setting.GithubToken)
-	req.Header.Set("Accept", "application/vnd.github.v3+json")
-	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := s.httpClient(ctx).Do(req)
+	resp, err := deploy.DoHTTPWithRetry(ctx, s.httpClient(ctx), buildReq, deploy.HTTPRetryPolicy{MaxAttempts: 3}, nil)
 	if err != nil {
 		return fmt.Errorf("上传失败: %w", err)
 	}
@@ -207,14 +239,65 @@ func (s *CdnUploadService) uploadToGitHub(ctx context.Context, setting domain.Cd
 		}
 	}
 
+	// 成功：把新 SHA 写入 manifest，后续部署可以直接走快速路径
+	if manifest != nil {
+		manifest.record(remotePath, localSHA)
+	}
 	return nil
 }
 
-// getGithubFileSHA 获取 GitHub 上文件的 SHA
+// errRemoteFileNotFound 明确的"远端文件不存在"信号（404），区分于"查询失败"。
+// uploadToGitHub 用 errors.Is 来决定"可以走 create 路径"还是"必须放弃"。
+var errRemoteFileNotFound = errors.New("remote file not found")
+
+// getGithubFileSHA 获取 GitHub 上文件的 SHA。
+//   - 文件存在且 200：返回 sha, nil
+//   - 文件真不存在（404）：返回 "", errRemoteFileNotFound
+//   - 其他错误（403 限流 / 5xx / 网络 / HTTP/2 stream cancel 等）：返回 "", err
+//     —— 必须透传，调用方不能降级为 create，否则会对已有文件发无 sha PUT 触发 422
+//
+// 重试策略在这里自己做一层（3 次指数退避），不走 DoHTTPWithRetry：原因是
+// GitHub 在 secondary rate limit 下会对 HTTP/2 stream 发 CANCEL，cancel 出现在
+// body 读取阶段（headers 已 200）而 DoHTTPWithRetry 只看 client.Do 的直接返回。
+// 这里把"发请求 + 读 body + 解析"三步绑在一起重试，才能吞掉 stream cancel。
 func (s *CdnUploadService) getGithubFileSHA(ctx context.Context, setting domain.CdnSetting, remotePath, branch string) (string, error) {
 	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/contents/%s?ref=%s",
 		setting.GithubUser, setting.GithubRepo, remotePath, branch)
 
+	const maxAttempts = 3
+	var lastErr error
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
+		sha, err := s.tryGetGithubFileSHA(ctx, setting, url)
+		if err == nil {
+			return sha, nil
+		}
+		// 404 是明确答案，不重试
+		if errors.Is(err, errRemoteFileNotFound) {
+			return "", err
+		}
+		// 只对瞬时错误重试（stream cancel / 5xx / 429 / 网络抖动等）
+		if !isTransientSHAErr(err) {
+			return "", fmt.Errorf("查询 %s 远端 SHA 失败: %w", remotePath, err)
+		}
+		lastErr = err
+		if attempt < maxAttempts {
+			wait := time.Duration(1<<(attempt-1)) * 500 * time.Millisecond
+			select {
+			case <-ctx.Done():
+				return "", ctx.Err()
+			case <-time.After(wait):
+			}
+		}
+	}
+	return "", fmt.Errorf("查询 %s 远端 SHA 重试 %d 次仍失败: %w", remotePath, maxAttempts, lastErr)
+}
+
+// tryGetGithubFileSHA 执行一次 GET+解析。
+// 状态码映射：200 → sha、404 → errRemoteFileNotFound、其他 → HTTP X 错误（可重试判定）。
+func (s *CdnUploadService) tryGetGithubFileSHA(ctx context.Context, setting domain.CdnSetting, url string) (string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return "", err
@@ -228,15 +311,46 @@ func (s *CdnUploadService) getGithubFileSHA(ctx context.Context, setting domain.
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("文件不存在")
+	switch resp.StatusCode {
+	case http.StatusOK:
+		var result githubContentsResponse
+		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+			return "", fmt.Errorf("解析远端元数据失败: %w", err)
+		}
+		return result.SHA, nil
+	case http.StatusNotFound:
+		return "", errRemoteFileNotFound
+	default:
+		return "", fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
+}
 
-	var result githubContentsResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "", err
+// isTransientSHAErr 判定一次 GET SHA 的错误是否值得重试。
+//   - 网络层瞬时错误（reset / EOF / timeout）
+//   - HTTP/2 stream cancel / INTERNAL_ERROR（GitHub secondary rate limit 常用信号）
+//   - 返回特定 HTTP 状态码（403 / 408 / 429 / 5xx）
+func isTransientSHAErr(err error) bool {
+	if err == nil {
+		return false
 	}
-	return result.SHA, nil
+	msg := err.Error()
+	// 网络层 / HTTP/2 层瞬时错误
+	if strings.Contains(msg, "connection reset") ||
+		strings.Contains(msg, "broken pipe") ||
+		strings.Contains(msg, "EOF") ||
+		strings.Contains(msg, "timeout") ||
+		strings.Contains(msg, "stream error") ||
+		strings.Contains(msg, "CANCEL") ||
+		strings.Contains(msg, "INTERNAL_ERROR") {
+		return true
+	}
+	// 明确的可重试状态码（403 覆盖 GitHub 的 secondary rate limit）
+	for _, code := range []string{"HTTP 403", "HTTP 408", "HTTP 429", "HTTP 500", "HTTP 502", "HTTP 503", "HTTP 504"} {
+		if strings.Contains(msg, code) {
+			return true
+		}
+	}
+	return false
 }
 
 // gitBlobSHA 计算 git blob 的 SHA1（与 GitHub API 一致）
@@ -286,8 +400,8 @@ func (s *CdnUploadService) TestUpload(ctx context.Context) (string, error) {
 	}
 	remotePath := ResolveSavePath(savePath, "gridea-test.txt")
 
-	// 上传
-	if err := s.uploadToGitHub(ctx, setting, tmpFile.Name(), remotePath); err != nil {
+	// 上传（测试场景不走 manifest 缓存：每次都实际触达 API 以便验证配置）
+	if err := s.uploadToGitHub(ctx, setting, tmpFile.Name(), remotePath, nil); err != nil {
 		return "", err
 	}
 
@@ -296,16 +410,43 @@ func (s *CdnUploadService) TestUpload(ctx context.Context) (string, error) {
 	return cdnURL, nil
 }
 
-// UploadMediaForDeploy 部署时扫描并上传媒体文件到 CDN
-func (s *CdnUploadService) UploadMediaForDeploy(ctx context.Context, appDir string, logger func(string)) error {
+// UploadFailure 描述一次 CDN 上传失败，用于汇总向上报告（见 UploadResult）。
+type UploadFailure struct {
+	Path  string // 相对仓库根的远程路径（例如 "post-images/cover.png"）
+	Error string // 人类可读错误（已脱敏，不包含 token）
+}
+
+// UploadResult 汇总 CDN 批量上传的结果。
+// 调用方据此决定是否中止部署 / 展示失败列表。
+type UploadResult struct {
+	Total    int
+	Success  int
+	Failures []UploadFailure
+}
+
+// UploadMediaForDeploy 部署时扫描并上传媒体文件到 CDN。
+// 返回 UploadResult 供调用方做失败汇总 / 阈值判断；error 仅用于"整体流程失败"
+// （如读配置失败）。单文件失败会计入 Failures 但不直接返回 error。
+func (s *CdnUploadService) UploadMediaForDeploy(ctx context.Context, appDir string, logger func(string)) (UploadResult, error) {
+	var res UploadResult
+
 	setting, err := s.cdnSettingRepo.GetCdnSetting(ctx)
 	if err != nil {
-		return fmt.Errorf("读取 CDN 配置失败: %w", err)
+		return res, fmt.Errorf("读取 CDN 配置失败: %w", err)
 	}
 
 	if !setting.Enabled || setting.GithubToken == "" {
-		return nil
+		return res, nil
 	}
+
+	// 加载本地 manifest：命中的文件跳过整轮 API 调用（#45）
+	manifest := loadCdnManifest(appDir)
+	defer func() {
+		// 无论成功失败都持久化已有进度，单文件失败不影响其它文件的快路径
+		if err := manifest.save(appDir); err != nil {
+			logger(fmt.Sprintf("警告：写入 CDN manifest 失败（下次将重新全量检查）: %v", err))
+		}
+	}()
 
 	// 需要扫描的目录
 	mediaDirs := []string{"post-images", "images", "media"}
@@ -348,18 +489,21 @@ func (s *CdnUploadService) UploadMediaForDeploy(ctx context.Context, appDir stri
 		}
 	}
 
-	if len(filesToUpload) == 0 {
+	res.Total = len(filesToUpload)
+	if res.Total == 0 {
 		logger("没有需要上传的媒体文件")
-		return nil
+		return res, nil
 	}
 
-	logger(fmt.Sprintf("发现 %d 个媒体文件，开始上传到 CDN...", len(filesToUpload)))
+	logger(fmt.Sprintf("发现 %d 个媒体文件，开始上传到 CDN...", res.Total))
 
-	// 使用 errgroup 控制并发（限制 5 并发）
+	// 使用 errgroup 控制并发（限制 5 并发）。
+	// 单文件失败不终止 errgroup（保持"尽量完成"语义），但会被收集到 failures 列表。
 	g, gCtx := errgroup.WithContext(ctx)
 	sem := make(chan struct{}, 5)
-	var uploadCount int
 	var mu sync.Mutex
+	var failures []UploadFailure
+	var successCount int
 
 	for _, file := range filesToUpload {
 		f := file
@@ -367,23 +511,127 @@ func (s *CdnUploadService) UploadMediaForDeploy(ctx context.Context, appDir stri
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			if err := s.uploadToGitHub(gCtx, setting, f.localPath, f.remotePath); err != nil {
+			if err := s.uploadToGitHub(gCtx, setting, f.localPath, f.remotePath, manifest); err != nil {
 				logger(fmt.Sprintf("上传 %s 失败: %v", f.remotePath, err))
+				mu.Lock()
+				failures = append(failures, UploadFailure{Path: f.remotePath, Error: err.Error()})
+				mu.Unlock()
 				return nil // 单个文件失败不中断整个上传
 			}
 
 			mu.Lock()
-			uploadCount++
+			successCount++
 			mu.Unlock()
 			return nil
 		})
 	}
 
 	if err := g.Wait(); err != nil {
-		return fmt.Errorf("上传媒体文件失败: %w", err)
+		return res, fmt.Errorf("上传媒体文件失败: %w", err)
 	}
 
-	logger(fmt.Sprintf("CDN 上传完成，共上传 %d 个文件", uploadCount))
+	res.Success = successCount
+	res.Failures = failures
+
+	// 清理孤儿（PR #96 / issue #47）：manifest 中有、但本次扫描不存在的 remotePath。
+	// 只基于 manifest 做对比，不做"列整库 diff"，天然安全：
+	// 如果用户在同一个 CDN 仓库里还有其它非 Gridea 上传的文件，不会被误删。
+	localSet := make(map[string]struct{}, len(filesToUpload))
+	for _, f := range filesToUpload {
+		localSet[f.remotePath] = struct{}{}
+	}
+	var orphans []string
+	for remotePath := range manifest.Entries {
+		if _, exists := localSet[remotePath]; !exists {
+			orphans = append(orphans, remotePath)
+		}
+	}
+	if len(orphans) > 0 {
+		logger(fmt.Sprintf("检测到 %d 个 CDN 孤儿文件（本地已删除但 CDN 仍存在），开始清理...", len(orphans)))
+		deleted := 0
+		for _, remotePath := range orphans {
+			if err := ctx.Err(); err != nil {
+				return res, err
+			}
+			if err := s.deleteFromGitHub(ctx, setting, remotePath); err != nil {
+				// 单文件删除失败不阻塞：下次部署还会再尝试
+				logger(fmt.Sprintf("清理 %s 失败（将下次重试）: %v", remotePath, err))
+				continue
+			}
+			manifest.mu.Lock()
+			delete(manifest.Entries, remotePath)
+			manifest.mu.Unlock()
+			deleted++
+		}
+		logger(fmt.Sprintf("CDN 孤儿清理完成：成功删除 %d / %d 个文件", deleted, len(orphans)))
+	}
+
+	// 上传汇总（PR #88 / issue #44）
+	if len(failures) == 0 {
+		logger(fmt.Sprintf("CDN 上传完成，共上传 %d 个文件", res.Success))
+	} else {
+		logger(fmt.Sprintf("CDN 上传完成：成功 %d / 总数 %d（失败 %d 个，详见下方列表）",
+			res.Success, res.Total, len(failures)))
+		// 摘要列出头几条失败，避免把日志撑爆；调用方会拿到完整 Failures 做决策
+		const previewN = 5
+		for i, f := range failures {
+			if i >= previewN {
+				logger(fmt.Sprintf("  ...（其余 %d 个失败未列出）", len(failures)-previewN))
+				break
+			}
+			logger(fmt.Sprintf("  ✗ %s: %s", f.Path, f.Error))
+		}
+	}
+	return res, nil
+}
+
+// deleteFromGitHub 从 GitHub CDN 仓库里删除一个已上传的文件。
+// 先 GET 当前 SHA，再 DELETE（Contents API 要求提供 sha 防覆盖冲突）。
+func (s *CdnUploadService) deleteFromGitHub(ctx context.Context, setting domain.CdnSetting, remotePath string) error {
+	branch := setting.GithubBranch
+	if branch == "" {
+		branch = "main"
+	}
+
+	// 1. 拿远端 SHA；404 认为已经不存在，视作删除成功
+	sha, err := s.getGithubFileSHA(ctx, setting, remotePath, branch)
+	if err != nil {
+		// getGithubFileSHA 把"文件不存在"当成 error —— 这里视作孤儿已消失
+		return nil
+	}
+
+	// 2. DELETE 请求
+	body := map[string]any{
+		"message": fmt.Sprintf("Delete orphan %s via Gridea Pro", remotePath),
+		"sha":     sha,
+		"branch":  branch,
+	}
+	bodyJSON, _ := json.Marshal(body)
+
+	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/contents/%s",
+		setting.GithubUser, setting.GithubRepo, remotePath)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, url, strings.NewReader(string(bodyJSON)))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+setting.GithubToken)
+	req.Header.Set("Accept", "application/vnd.github.v3+json")
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := s.httpClient(ctx).Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
+		if resp.StatusCode == http.StatusNotFound {
+			return nil // 已消失
+		}
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
+	}
 	return nil
 }
 

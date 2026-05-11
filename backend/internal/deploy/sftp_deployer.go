@@ -18,11 +18,21 @@ import (
 )
 
 // SftpProvider 实现了 SFTP 文件上传部署策略
-type SftpProvider struct{}
+type SftpProvider struct {
+	// knownHostsPath 用于 TOFU 形式的 HostKey 校验；为空时走内存级 TOFU（降级）。
+	// 通过 NewSftpProviderWithKnownHosts 注入，生产路径应为 AppConfigDir/known_hosts。
+	knownHostsPath string
+}
 
-// NewSftpProvider 创建 SftpProvider
+// NewSftpProvider 创建默认 SftpProvider（无 known_hosts 持久化，仅进程内 TOFU）。
+// 生产路径请用 NewSftpProviderWithKnownHosts。
 func NewSftpProvider() *SftpProvider {
 	return &SftpProvider{}
+}
+
+// NewSftpProviderWithKnownHosts 注入 known_hosts 文件路径，启用跨会话的 HostKey 校验。
+func NewSftpProviderWithKnownHosts(knownHostsPath string) *SftpProvider {
+	return &SftpProvider{knownHostsPath: knownHostsPath}
 }
 
 // Deploy 实现 Provider 接口
@@ -62,11 +72,12 @@ func (p *SftpProvider) Deploy(ctx context.Context, outputDir string, setting *do
 		return fmt.Errorf(domain.ErrSftpConfigMissing)
 	}
 
-	// 3. SSH 连接
+	// 3. SSH 连接：使用 TOFU 形式的 HostKey 校验替代 InsecureIgnoreHostKey。
+	//    首次连接会把指纹写入 known_hosts；后续任何指纹变化都会被硬拒绝（防 MITM）。
 	sshConfig := &ssh.ClientConfig{
 		User:            username,
 		Auth:            authMethods,
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		HostKeyCallback: TrustOnFirstUseHostKeyCallback(p.knownHostsPath, logger),
 		Timeout:         15 * time.Second,
 	}
 
@@ -88,18 +99,24 @@ func (p *SftpProvider) Deploy(ctx context.Context, outputDir string, setting *do
 	}
 	defer client.Close()
 
-	// 5. 清理远程目录
-	logger(fmt.Sprintf("正在清理远程目录: %s", remotePath))
-	p.cleanRemoteDir(client, remotePath)
+	// 5. 原子切换策略（issue #40）：
+	//    a. 上传到 <remotePath>.new-<ts>（staging），旧站点完好无损
+	//    b. 全部成功 → 把旧目录 rename 到 <remotePath>.old-<ts>，再把 staging rename 为 remotePath
+	//    c. 失败 → 清理 staging，旧站点保持原样，访客零感知
+	//
+	// 好处：上传期间访客全程访问旧版本；中途断网不毁站；失败可直接 dropping staging 重新开始。
+	ts := time.Now().Format("20060102-150405")
+	stagingPath := remotePath + ".new-" + ts
+	backupPath := remotePath + ".old-" + ts
 
-	// 确保远程目录存在
-	if err := client.MkdirAll(remotePath); err != nil {
-		return fmt.Errorf("创建远程目录失败: %w", err)
+	logger(fmt.Sprintf("正在上传到暂存目录: %s（旧站点保持可用）", stagingPath))
+	if err := client.MkdirAll(stagingPath); err != nil {
+		return fmt.Errorf("创建暂存目录失败: %w", err)
 	}
 
-	// 6. 上传文件
+	// 6. 上传文件到 staging
 	fileCount := 0
-	err = filepath.Walk(outputDir, func(localPath string, info os.FileInfo, err error) error {
+	uploadErr := filepath.Walk(outputDir, func(localPath string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
@@ -128,8 +145,8 @@ func (p *SftpProvider) Deploy(ctx context.Context, outputDir string, setting *do
 		if err != nil {
 			return err
 		}
-		// 远程路径始终使用 Unix 风格
-		remoteFile := path.Join(remotePath, filepath.ToSlash(relPath))
+		// 远程路径始终使用 Unix 风格；上传到 staging 目录
+		remoteFile := path.Join(stagingPath, filepath.ToSlash(relPath))
 
 		// 创建远程目录
 		remoteDir := path.Dir(remoteFile)
@@ -150,8 +167,44 @@ func (p *SftpProvider) Deploy(ctx context.Context, outputDir string, setting *do
 		return nil
 	})
 
-	if err != nil {
-		return err
+	if uploadErr != nil {
+		// 清理 staging（尽力而为），旧站点保持原样
+		logger(fmt.Sprintf("上传失败，正在清理暂存目录 %s...", stagingPath))
+		p.cleanRemoteDir(client, stagingPath)
+		_ = client.RemoveDirectory(stagingPath)
+		return uploadErr
+	}
+
+	// 7. 原子切换：rename 旧→backup、rename staging→remote
+	logger("上传完成，正在切换到新版本（原子 rename）...")
+
+	// 旧目录可能不存在（首次部署），尝试 rename 失败不视为错误
+	oldExists := false
+	if _, err := client.Stat(remotePath); err == nil {
+		oldExists = true
+	}
+	if oldExists {
+		if err := client.Rename(remotePath, backupPath); err != nil {
+			// 清理 staging，保留旧目录
+			p.cleanRemoteDir(client, stagingPath)
+			_ = client.RemoveDirectory(stagingPath)
+			return fmt.Errorf("重命名旧目录失败: %w", err)
+		}
+	}
+	if err := client.Rename(stagingPath, remotePath); err != nil {
+		// 尝试把 backup 改回来，尽量不让站点挂掉
+		if oldExists {
+			_ = client.Rename(backupPath, remotePath)
+		}
+		p.cleanRemoteDir(client, stagingPath)
+		_ = client.RemoveDirectory(stagingPath)
+		return fmt.Errorf("重命名新目录失败: %w", err)
+	}
+
+	// 8. 清理旧备份（best-effort，失败不影响部署成功）
+	if oldExists {
+		p.cleanRemoteDir(client, backupPath)
+		_ = client.RemoveDirectory(backupPath)
 	}
 
 	logger(fmt.Sprintf("✅ SFTP 部署成功！共上传 %d 个文件到 %s", fileCount, remotePath))

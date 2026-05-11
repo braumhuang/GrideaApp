@@ -59,13 +59,17 @@ variant="outline"
           {{ t('nav.preview') }}
         </Button>
 
+        <!-- 发布 / 取消按钮（#42）：部署中点击切换为取消；不再需要 disabled -->
         <Button
 variant="default"
-          class="w-36 h-8 text-xs justify-center rounded-full bg-primary text-background hover:bg-primary/90 cursor-pointer"
-          :disabled="publishLoading" @click="publish">
-          <template v-if="publishLoading">
+          class="w-36 h-8 text-xs justify-center rounded-full cursor-pointer"
+          :class="publishLoading
+            ? 'bg-destructive text-destructive-foreground hover:bg-destructive/90'
+            : 'bg-primary text-background hover:bg-primary/90'"
+          @click="publishLoading ? cancelPublish() : publish()">
+          <template v-if="publishLoading && !cancelling">
             <svg
-class="animate-spin h-4 w-4 text-primary-foreground"
+class="animate-spin h-4 w-4 text-destructive-foreground"
               xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
               <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
               <path
@@ -73,6 +77,10 @@ class="opacity-75" fill="currentColor"
                 d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z">
               </path>
             </svg>
+            <span class="ml-2">取消发布</span>
+          </template>
+          <template v-else-if="cancelling">
+            <span class="text-xs">取消中...</span>
           </template>
           <template v-else>
             <RocketLaunchIcon class="size-3 mr-2" />
@@ -119,6 +127,114 @@ fill-rule="evenodd" clip-rule="evenodd"
         </router-view>
       </div>
     </main>
+
+    <!--
+      部署面板（#43，重新设计）：push 布局的 flex 兄弟节点，而非 fixed 浮层。
+      收起时 width=0（被 overflow-hidden 截断）、展开时 width=380px；主内容通过
+      flex 自动收窄给它腾空间。融入 app 自身调色盘，和左栏视觉对称。
+    -->
+    <aside
+      class="flex-shrink-0 overflow-hidden bg-sidebar border-l border-border transition-[width] duration-300 ease-out"
+      :class="deployPanelVisible ? 'w-[380px]' : 'w-0'">
+      <!-- 内层固定 380px 宽，父层 width 过渡期间不会挤压内容 -->
+      <div class="w-[380px] h-full flex flex-col">
+        <!-- Header -->
+        <div class="px-5 py-4 border-b border-border/60 flex items-start justify-between gap-3">
+          <div class="flex-1 min-w-0">
+            <div class="flex items-center gap-2 mb-1.5">
+              <span
+                v-if="publishLoading"
+                class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-primary/10 text-primary text-[11px] font-medium">
+                <span class="size-1.5 rounded-full bg-primary animate-pulse"></span>
+                部署中
+              </span>
+              <span
+                v-else-if="deployOutcome === 'success'"
+                class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-green-500/10 text-green-600 dark:text-green-400 text-[11px] font-medium">
+                <span class="size-1.5 rounded-full bg-green-500"></span>
+                部署完成
+              </span>
+              <span
+                v-else-if="deployOutcome === 'failed'"
+                class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-destructive/10 text-destructive text-[11px] font-medium">
+                <span class="size-1.5 rounded-full bg-destructive"></span>
+                部署失败
+              </span>
+              <span
+                v-else
+                class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-muted text-muted-foreground text-[11px] font-medium">
+                <span class="size-1.5 rounded-full bg-muted-foreground/40"></span>
+                已取消
+              </span>
+            </div>
+            <div class="text-xs text-muted-foreground truncate">
+              {{ deploySummary }}
+            </div>
+          </div>
+          <button
+            class="size-7 flex-shrink-0 grid place-items-center rounded-full text-muted-foreground hover:text-primary hover:bg-primary/5 transition-colors cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
+            @click="deployPanelVisible = false">
+            <XMarkIcon class="size-4" />
+          </button>
+        </div>
+
+        <!-- 进度条：只有日志里解析到数字才显示 -->
+        <div v-if="deployProgress.total > 0" class="px-5 py-3 border-b border-border/60">
+          <div class="flex items-center justify-between text-[11px] text-muted-foreground mb-2">
+            <span>{{ deployProgress.label }}</span>
+            <span class="font-mono tabular-nums">{{ deployProgress.done }} / {{ deployProgress.total }}</span>
+          </div>
+          <div class="h-1 bg-muted rounded-full overflow-hidden">
+            <div
+              class="h-full bg-primary transition-all duration-300 ease-out"
+              :style="{ width: `${deployProgress.pct}%` }"></div>
+          </div>
+          <div v-if="deployProgress.failed > 0" class="mt-2 flex items-center gap-3 text-[10px]">
+            <span class="text-green-600 dark:text-green-400">
+              ✓ 成功 {{ deployProgress.done - deployProgress.failed }}
+            </span>
+            <span class="text-destructive">✗ 失败 {{ deployProgress.failed }}</span>
+          </div>
+        </div>
+
+        <!-- 日志流 -->
+        <div ref="logScrollEl" class="flex-1 overflow-y-auto py-3 px-4 space-y-1">
+          <div
+            v-for="(entry, idx) in deployLogs"
+            :key="idx"
+            class="flex gap-2.5 text-[11px] leading-5"
+            :class="logLineClass(entry)">
+            <span class="flex-shrink-0 w-3.5 text-center font-mono">{{ logLineIcon(entry) }}</span>
+            <span class="flex-1 break-all font-mono">{{ logLineText(entry) }}</span>
+          </div>
+          <div
+            v-if="publishLoading && deployLogs.length === 0"
+            class="text-[11px] text-muted-foreground italic px-1">
+            等待后端输出...
+          </div>
+        </div>
+
+        <!-- Footer -->
+        <div class="px-4 py-3 border-t border-border/60 bg-muted/30 flex items-center justify-between gap-2">
+          <span class="text-[10px] text-muted-foreground font-mono tabular-nums">
+            {{ deployLogs.length }} 行
+          </span>
+          <div class="flex items-center gap-1">
+            <button
+              class="h-7 px-3 text-[11px] rounded-full text-muted-foreground hover:text-primary hover:bg-primary/5 transition-colors cursor-pointer"
+              @click="copyDeployLogs">
+              复制日志
+            </button>
+            <button
+              v-if="!publishLoading && deployLogs.length > 0"
+              class="h-7 px-3 text-[11px] rounded-full text-muted-foreground hover:text-primary hover:bg-primary/5 transition-colors cursor-pointer"
+              @click="clearDeployLogs">
+              清空
+            </button>
+          </div>
+        </div>
+      </div>
+    </aside>
 
     <!-- Dialogs -->
     <Dialog v-model:open="updateModalVisible">
@@ -266,6 +382,7 @@ fill-rule="evenodd" clip-rule="evenodd"
       </DialogContent>
     </Dialog>
 
+
     <Dialog v-model:open="systemModalVisible">
       <DialogContent class="max-w-[800px] overflow-hidden">
         <DialogHeader>
@@ -281,7 +398,7 @@ fill-rule="evenodd" clip-rule="evenodd"
 </template>
 
 <script lang="ts" setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useCommentStore } from '@/stores/comment'
@@ -290,7 +407,7 @@ import { useSiteStore } from '@/stores/site'
 import AppSystem from '@/views/preferences/index.vue'
 import { Button } from '@/components/ui/button'
 import { EventsEmit, EventsOn, BrowserOpenURL } from '@/wailsjs/runtime'
-import { DeployToGit } from '@/wailsjs/go/facade/DeployFacade'
+import { DeployToGit, CancelDeploy } from '@/wailsjs/go/facade/DeployFacade'
 import {
   CheckUpdate,
   StartDownload,
@@ -318,6 +435,7 @@ import {
   ArrowUpCircleIcon,
   CheckCircleIcon,
   ExclamationCircleIcon,
+  XMarkIcon,
 } from '@heroicons/vue/24/outline'
 import pkg from '../../package.json'
 
@@ -359,6 +477,99 @@ const updateContent = ref('')
 const logModalVisible = ref(false)
 const sidebarVisible = ref(true)
 const log = ref<any>({})
+const cancelling = ref(false)
+
+// 部署面板（#43，重新设计）：后端 runtime.EventsEmit("deploy-log", msg) 的行累积到
+// deployLogs；一个从右侧滑入的抽屉面板呈现状态 + 进度 + 日志流，融入 app 自身调色盘。
+const deployLogs = ref<string[]>([])
+const deployPanelVisible = ref(false)
+const logScrollEl = ref<HTMLElement | null>(null)
+
+// 新日志到达时自动滚到底部（仅当用户没有手动向上滚查看历史时才跟随）
+watch(() => deployLogs.value.length, async () => {
+  await nextTick()
+  const el = logScrollEl.value
+  if (!el) return
+  // 近底（32px 阈值）才跟随滚动；否则尊重用户当前位置
+  const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 32
+  if (atBottom) el.scrollTop = el.scrollHeight
+})
+
+// 从日志里解析进度：认"发现 N 个媒体文件" 作为总数，"上传 X 失败" 累计失败，
+// "CDN 上传完成：成功 X / 总数 Y" 作为最终权威值。如果都没匹配上就不显示进度条。
+const deployProgress = computed(() => {
+  let total = 0
+  let done = 0
+  let failed = 0
+  let label = ''
+  for (const line of deployLogs.value) {
+    const mStart = line.match(/发现\s+(\d+)\s+个媒体文件/)
+    if (mStart) {
+      total = parseInt(mStart[1], 10)
+      label = 'CDN 媒体文件'
+    }
+    if (/^上传\s.+\s失败:/.test(line) || /^\s*✗\s/.test(line)) {
+      failed++
+    }
+    const mEnd = line.match(/CDN 上传完成：成功\s+(\d+)\s+\/\s+总数\s+(\d+)（失败\s+(\d+)/)
+    if (mEnd) {
+      done = parseInt(mEnd[1], 10) + parseInt(mEnd[3], 10)
+      total = parseInt(mEnd[2], 10)
+      failed = parseInt(mEnd[3], 10)
+    } else {
+      const mEndSimple = line.match(/CDN 上传完成，共上传\s+(\d+)\s+个文件/)
+      if (mEndSimple) {
+        done = parseInt(mEndSimple[1], 10)
+        if (total === 0) total = done
+      }
+    }
+  }
+  // 部署进行中：把已见过的"上传 X"成功/失败行加起来当作 done 的近似
+  if (done === 0 && total > 0) {
+    for (const line of deployLogs.value) {
+      if (/^上传\s.+\s失败:/.test(line)) done++
+    }
+  }
+  const pct = total === 0 ? 0 : Math.min(100, Math.round((done / total) * 100))
+  return { total, done, failed, pct, label }
+})
+
+// 顶部 summary 文案：优先显示"XX · done/total"，否则显示最后一行日志摘要
+const deploySummary = computed(() => {
+  const p = deployProgress.value
+  if (p.total > 0) return `${p.label} · ${p.done} / ${p.total}`
+  const last = deployLogs.value[deployLogs.value.length - 1]
+  if (!last) return '准备中...'
+  return last.length > 48 ? last.slice(0, 48) + '…' : last
+})
+
+// 部署结果（部署中 / 成功 / 失败 / 取消）。非 running 时用来切换 chip 样式。
+const deployOutcome = ref<'running' | 'success' | 'failed' | 'canceled'>('running')
+
+// logLineIcon / logLineClass / logLineText：按日志前缀染色和图标化，不再是一团黑白文本
+const logLineIcon = (entry: string): string => {
+  if (/^上传\s.+\s失败/.test(entry) || /^\s*✗\s/.test(entry) || /❌/.test(entry)) return '✗'
+  if (/^✅/.test(entry) || /成功/.test(entry)) return '✓'
+  if (/⚠️|警告/.test(entry)) return '!'
+  if (/^发现\s+\d+/.test(entry) || /开始上传/.test(entry) || /Starting|Building|Uploading|Deploying/.test(entry)) return '▸'
+  return '·'
+}
+
+const logLineClass = (entry: string): string => {
+  if (/^上传\s.+\s失败/.test(entry) || /^\s*✗\s/.test(entry) || /❌/.test(entry)) return 'text-destructive'
+  if (/^✅/.test(entry) || /部署成功|上传完成，共上传/.test(entry)) return 'text-green-600 dark:text-green-400'
+  if (/⚠️|警告/.test(entry)) return 'text-amber-600 dark:text-amber-400'
+  return 'text-muted-foreground'
+}
+
+// 去掉行首的 emoji / 冗余前缀，让对齐更干净
+const logLineText = (entry: string): string => entry.replace(/^(?:✅|❌|⚠️|✗|✓)\s*/, '').trim()
+
+const clearDeployLogs = () => {
+  deployLogs.value = []
+  deployPanelVisible.value = false
+  deployOutcome.value = 'running'
+}
 
 const currentRouter = computed(() => route.path)
 
@@ -431,9 +642,14 @@ const preview = () => {
 const publish = async () => {
   if (publishLoading.value) return
   publishLoading.value = true
+  // 每次部署重置状态：清空旧日志、切回 running 态。
+  // 面板暂时不主动打开（UI 方案重新设计中），数据流和事件订阅保留。
+  deployLogs.value = []
+  deployOutcome.value = 'running'
 
   try {
     await DeployToGit()
+    deployOutcome.value = 'success'
     EventsEmit('app:toast', {
       message: t('dashboard.syncSuccess'),
       type: 'success',
@@ -441,13 +657,45 @@ const publish = async () => {
     })
   } catch (error: any) {
     console.error('Deploy error:', error)
-    log.value = {
-      type: t('dashboard.syncError1'),
-      message: error.message || String(error)
+    const msg = error?.message || String(error)
+    if (/canceled|cancelled|取消/i.test(msg)) {
+      deployOutcome.value = 'canceled'
+      EventsEmit('app:toast', { message: '已取消发布', type: 'info', duration: 2000 })
+    } else {
+      deployOutcome.value = 'failed'
+      // 日志面板暂时隐藏，失败原因必须通过 toast 让用户看到。
+      // 取 message 首行（git/HTTP 错误常带多行 stack），截断 200 字避免溢出。
+      const firstLine = msg.split('\n')[0].trim()
+      const shortMsg = firstLine.length > 200 ? firstLine.slice(0, 200) + '…' : firstLine
+      EventsEmit('app:toast', {
+        message: `部署失败：${shortMsg}`,
+        type: 'error',
+        duration: 8000,
+      })
     }
-    logModalVisible.value = true
   } finally {
     publishLoading.value = false
+    cancelling.value = false
+  }
+}
+
+const cancelPublish = async () => {
+  if (!publishLoading.value || cancelling.value) return
+  cancelling.value = true
+  try {
+    await CancelDeploy()
+  } catch (e) {
+    console.error('CancelDeploy error:', e)
+    cancelling.value = false
+  }
+}
+
+const copyDeployLogs = async () => {
+  try {
+    await navigator.clipboard.writeText(deployLogs.value.join('\n'))
+    EventsEmit('app:toast', { message: '已复制部署日志', type: 'success', duration: 2000 })
+  } catch {
+    // 剪贴板权限缺失等场景，忽略
   }
 }
 
@@ -576,6 +824,16 @@ onMounted(() => {
   EventsOn('log-error', (result: any) => {
     log.value = result
     logModalVisible.value = true
+  })
+
+  // 部署日志：后端 DeployService.log 会 emit 到 deploy-log。
+  // publish() 开始时清空 deployLogs，这里持续 append，保证失败后用户仍可查看完整过程。
+  EventsOn('deploy-log', (msg: any) => {
+    if (typeof msg === 'string') {
+      deployLogs.value.push(msg)
+    } else if (msg && typeof msg.toString === 'function') {
+      deployLogs.value.push(String(msg))
+    }
   })
 
   // 监听首选项菜单事件

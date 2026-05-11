@@ -88,7 +88,7 @@ var platformFieldOrder = map[string][]string{
 	"coding":  {"domain", "repository", "branch", "username", "email", "tokenUsername", "token", "cname"},
 	"netlify": {"domain", "netlifySiteId", "netlifyAccessToken"},
 	"vercel":  {"domain", "repository", "token", "cname"},
-	"sftp":    {"domain", "transferProtocol", "server", "port", "username", "password", "privateKey", "remotePath"},
+	"sftp":    {"domain", "transferProtocol", "ftpMode", "allowInsecureTLS", "server", "port", "username", "password", "privateKey", "remotePath"},
 }
 
 // MarshalJSON 自定义 JSON 序列化，确保平台配置项按前端表单顺序输出
@@ -276,6 +276,35 @@ func (s *Setting) RemotePath() string { return s.Get("remotePath") }
 // TransferProtocol 当前平台的传输协议（sftp 或 ftp）
 func (s *Setting) TransferProtocol() string { return s.Get("transferProtocol") }
 
+// FtpMode 当 TransferProtocol=="ftp" 时决定是否叠加 TLS：
+//
+//   - "ftps-explicit"：连接后发送 AUTH TLS 升级到 TLS（21 端口）—— 推荐
+//   - "ftps-implicit"：直接用 TLS 建立连接（通常走 990 端口）
+//   - "ftp" 或空：明文（不安全，仅兼容老配置）
+//
+// 空值按"ftp"处理，保持向后兼容。
+func (s *Setting) FtpMode() string { return s.Get("ftpMode") }
+
+// AllowInsecureTLS 当启用 FTPS 时是否允许自签/无效证书。默认 false；仅在
+// 用户 NAS 自签场景显式开启。在前端设置表单里对应一个"允许不安全证书"开关。
+func (s *Setting) AllowInsecureTLS() bool {
+	// 宽松解析字符串形式的 bool（前端 Select / Switch 可能落成 "true" / "1" / 布尔）
+	v := s.Get("allowInsecureTLS")
+	if v == "true" || v == "1" {
+		return true
+	}
+	// 也支持直接存 bool 的历史/兼容路径
+	if s.PlatformConfigs == nil {
+		return false
+	}
+	if cfg, ok := s.PlatformConfigs[s.Platform]; ok {
+		if b, ok := cfg["allowInsecureTLS"].(bool); ok {
+			return b
+		}
+	}
+	return false
+}
+
 // Validate 校验配置数据
 func (s *Setting) Validate() error {
 	if s.Platform == "" {
@@ -295,6 +324,30 @@ func (s *Setting) SetPlatformConfig(platform, key string, value any) {
 	}
 	m[key] = value
 	s.PlatformConfigs[platform] = m
+}
+
+// Clone 返回 Setting 的深拷贝，特别地把嵌套的 PlatformConfigs map 也一并克隆。
+//
+// 原因：Setting 是值类型，但 PlatformConfigs (map[string]map[string]any) 以及
+// 其内嵌的 map[string]any 都是引用类型。任何"看似值传递"的拷贝都会让调用方
+// 拿到同一份 inner map 的引用 —— 在 Keychain 凭证注入路径上这会反向污染
+// repository 缓存，导致敏感字段泄漏给前端（见 issue #39）。
+//
+// 所有"要在 Setting 之上做修改"的下游（InjectCredentials / ExtractSensitiveFields /
+// 测试连接 / 模板渲染）都应先 Clone 再改。
+func (s Setting) Clone() Setting {
+	cp := s
+	if s.PlatformConfigs != nil {
+		cp.PlatformConfigs = make(map[string]map[string]any, len(s.PlatformConfigs))
+		for platform, inner := range s.PlatformConfigs {
+			m := make(map[string]any, len(inner))
+			for k, v := range inner {
+				m[k] = v
+			}
+			cp.PlatformConfigs[platform] = m
+		}
+	}
+	return cp
 }
 
 // SettingRepository 定义配置存储接口
