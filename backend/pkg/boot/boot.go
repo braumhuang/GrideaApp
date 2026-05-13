@@ -15,7 +15,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-	"time"
 
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/menu"
@@ -238,18 +237,6 @@ func Run(assets embed.FS, version string) {
 			appCtx = ctx // Capture context
 			application.Startup(ctx)
 			services.Startup(ctx)
-
-			// 窗口显示保险栓（issue #102）：
-			// StartHidden=true 让窗口默认藏起来，等前端 onMounted 调 WindowShow 才露面，
-			// 目的是规避白屏一闪（FOUC）。但前端 mount 失败 / 慢 / WebKit 异常时窗口永远不出来
-			// （用户只看到菜单栏，进程在跑但窗口看不见——issue #102 的故事）。
-			// 后端启动 5s 后兜底强制 show，前端如已自己 show 过则此次 show 是 no-op。
-			// 代价：极慢机器先看 5s 隐藏期再露面，比"永远黑窗"好得多。
-			time.AfterFunc(5*time.Second, func() {
-				if appCtx != nil {
-					wailsRuntime.WindowShow(appCtx)
-				}
-			})
 
 			// 监听前端语言切换事件，运行时重建菜单（仅 macOS 有原生菜单）
 			if !frameless {
