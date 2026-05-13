@@ -3,6 +3,7 @@ package service
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -142,8 +143,11 @@ func (m *DataMigrator) RunMigration(ctx context.Context) error {
 
 	if categoryNeedsSave {
 		// 因为很多老数据原来是没有 ID 的，如果调 Update 会报 "item not found"。所以必须用 SaveAll 全量覆盖保存。
+		// 保存失败必须 fail-fast：若仅 log 后继续，下文 Post.Update 会用 in-memory 中
+		// 已经赋了新 ID 的 categorySlugToIDMap，但磁盘上的 categories.json 还是旧的——
+		// 文章会写入"只在内存中存在"的 CategoryID，重启后引用断裂、分类页丢文章。
 		if err := m.categoryRepo.SaveAll(ctx, categories); err != nil {
-			log.Printf("[DataMigrator] 保存修复后的分类数据失败: %v", err)
+			return fmt.Errorf("迁移分类数据保存失败: %w", err)
 		}
 	}
 
@@ -166,8 +170,9 @@ func (m *DataMigrator) RunMigration(ctx context.Context) error {
 	}
 
 	if tagNeedsSave {
+		// 同 categories：失败必须 fail-fast，否则 Post.TagIDs 写入只在内存中存在的 ID。
 		if err := m.tagRepo.SaveAll(ctx, tags); err != nil {
-			log.Printf("[DataMigrator] 保存修复后的标签数据失败: %v", err)
+			return fmt.Errorf("迁移标签数据保存失败: %w", err)
 		}
 	}
 
@@ -182,8 +187,10 @@ func (m *DataMigrator) RunMigration(ctx context.Context) error {
 			}
 		}
 		if menuNeedsSave {
+			// menus/links/memos 不被 Post 引用，但 ID 仍需持久化——失败同样 fail-fast，
+			// 让用户立刻看到目录写入异常（云盘锁文件、磁盘满等），不带不一致状态上路。
 			if err := m.menuRepo.SaveAll(ctx, menus); err != nil {
-				log.Printf("[DataMigrator] 保存修复后的菜单数据失败: %v", err)
+				return fmt.Errorf("迁移菜单数据保存失败: %w", err)
 			}
 		}
 	} else {
@@ -202,7 +209,7 @@ func (m *DataMigrator) RunMigration(ctx context.Context) error {
 		}
 		if linkNeedsSave {
 			if err := m.linkRepo.SaveAll(ctx, links); err != nil {
-				log.Printf("[DataMigrator] 保存修复后的友链数据失败: %v", err)
+				return fmt.Errorf("迁移友链数据保存失败: %w", err)
 			}
 		}
 	} else {
@@ -221,7 +228,7 @@ func (m *DataMigrator) RunMigration(ctx context.Context) error {
 		}
 		if memoNeedsSave {
 			if err := m.memoRepo.SaveAll(ctx, memos); err != nil {
-				log.Printf("[DataMigrator] 保存修复后的闪念数据失败: %v", err)
+				return fmt.Errorf("迁移闪念数据保存失败: %w", err)
 			}
 		}
 	} else {
@@ -234,6 +241,10 @@ func (m *DataMigrator) RunMigration(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("加载文章聚合失败: %w", err)
 	}
+
+	// 单篇 post 回写失败用 errors.Join 累积，不直接 return：单个文件锁定 / 权限
+	// 异常不应阻断其余文章的迁移，但所有失败仍需向上汇报，避免静默通过。
+	var postUpdateErrs error
 
 	for _, post := range posts {
 		var postModified bool
@@ -288,7 +299,8 @@ func (m *DataMigrator) RunMigration(ctx context.Context) error {
 
 		if postModified {
 			if err := m.postRepo.Update(ctx, &post); err != nil {
-				log.Printf("[DataMigrator] 回写修复文章失败 [%s]: %v", post.FileName, err)
+				postUpdateErrs = errors.Join(postUpdateErrs,
+					fmt.Errorf("回写修复文章失败 [%s]: %w", post.FileName, err))
 			} else {
 				postFixed++
 			}
@@ -301,7 +313,7 @@ func (m *DataMigrator) RunMigration(ctx context.Context) error {
 		log.Printf("[DataMigrator] 修复了 %d 项历史数据 (分类 %d / 标签 %d / 菜单 %d / 友链 %d / 闪念 %d / 文章 %d)",
 			total, categoryFixed, tagFixed, menuFixed, linkFixed, memoFixed, postFixed)
 	}
-	return nil
+	return postUpdateErrs
 }
 
 // slicesEqual 比较两个 string 切片内容是否一致（无序集合比较，解决顺序不同导致的反复重写）
