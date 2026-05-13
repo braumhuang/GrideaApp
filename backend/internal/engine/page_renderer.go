@@ -221,8 +221,14 @@ func (r *PageRenderer) RenderIndex(ctx context.Context, buildDir string, data *t
 	return nil
 }
 
-// RenderPost 渲染文章详情页
-func (r *PageRenderer) RenderPost(buildDir string, post domain.Post, baseData *template.TemplateData) error {
+// RenderPost 渲染文章详情页。
+// ctx 用于配合外层并发 errgroup 的取消语义：用户在"取消发布"按下后，
+// 后续 goroutine 进来直接短路，不浪费 CPU 把整批文章渲染完。
+func (r *PageRenderer) RenderPost(ctx context.Context, buildDir string, post domain.Post, baseData *template.TemplateData) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
 	// 创建文章专属数据
 	postData := *baseData
 	postData.Post = r.dataBuilder.ConvertPost(post, domain.ThemeConfig{

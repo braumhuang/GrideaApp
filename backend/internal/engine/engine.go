@@ -307,8 +307,11 @@ func (s *Engine) renderAllImpl(ctx context.Context) error {
 		}
 	}
 
-	// 渲染文章详情页 (并发)
-	g, _ := errgroup.WithContext(ctx)
+	// 渲染文章详情页 (并发)。
+	// 用派生 gCtx：任一篇渲染返回 error 时 errgroup 会自动 cancel gCtx，
+	// 让其他在跑的 goroutine 在 RenderPost 的 ctx.Err() 检查处尽早退出；
+	// 外层 ctx 被取消（"取消发布"）时同样能传导进每个 goroutine。
+	g, gCtx := errgroup.WithContext(ctx)
 	g.SetLimit(runtime.NumCPU())
 
 	for _, post := range posts {
@@ -317,7 +320,7 @@ func (s *Engine) renderAllImpl(ctx context.Context) error {
 		}
 		p := post
 		g.Go(func() error {
-			if err := s.pageRenderer.RenderPost(buildDir, p, templateData); err != nil {
+			if err := s.pageRenderer.RenderPost(gCtx, buildDir, p, templateData); err != nil {
 				s.logger.Error(fmt.Sprintf("rendering post %s: %v", p.Title, err))
 				return fmt.Errorf("rendering post %s: %w", p.Title, err)
 			}
