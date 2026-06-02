@@ -124,7 +124,7 @@ Hugo, Hexo, and Jekyll are great tools — but they're built for developers. You
 
 ### 🚀 Deployment
 
-- One-click deploy to 6 platforms: GitHub Pages, Vercel, Netlify, Gitee, Coding, SFTP/FTP
+- One-click deploy to 5 platforms: GitHub Pages, Vercel, Netlify, Coding, SFTP/FTP
 - Pure Go Git engine built in — **no system Git required**, more reliable syncing
 - CDN media upload: automatically sync images and assets to a GitHub repository on deploy, with customizable path templates
 - Custom domain (CNAME) support

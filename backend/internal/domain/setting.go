@@ -36,7 +36,6 @@ func (s *Setting) IsDeployNotifyEnabled() bool {
 // key: 平台 ID，value: 字段名列表
 var SensitiveFields = map[string][]string{
 	"github":  {"token"},
-
 	"coding":  {"token"},
 	"netlify": {"netlifyAccessToken"},
 	"vercel":  {"token"},
@@ -97,7 +96,6 @@ func (s *Setting) InjectCredentials(credentials map[string]string) {
 // platformFieldOrder 定义各平台配置项的输出顺序，与前端表单顺序一致
 var platformFieldOrder = map[string][]string{
 	"github":  {"domain", "repository", "branch", "username", "email", "tokenUsername", "token", "cname"},
-
 	"coding":  {"domain", "repository", "branch", "username", "email", "tokenUsername", "token", "cname"},
 	"netlify": {"domain", "netlifySiteId", "netlifyAccessToken"},
 	"vercel":  {"domain", "repository", "token", "cname"},
