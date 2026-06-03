@@ -144,6 +144,10 @@ func (r *postRepository) save(ctx context.Context, post *domain.Post, isUpdate b
 	default:
 	}
 
+	// 入口归一：保证写盘/缓存键用的 FileName 是裸名（消除 .md 双扩展 / 缓存失同步）
+	post.FileName = normalizeFileName(post.FileName)
+	post.DeleteFileName = normalizeFileName(post.DeleteFileName)
+
 	// Ensure cache is loaded before modifying it (to avoid partial state if saving without listing first)
 	// Although we are locking, consistency suggests we should have loaded state.
 	// But simply appending to cache if not loaded might be risky if we later load/overwrite.
@@ -290,6 +294,7 @@ func (r *postRepository) save(ctx context.Context, post *domain.Post, isUpdate b
 }
 
 func (r *postRepository) Delete(ctx context.Context, fileName string) error {
+	fileName = normalizeFileName(fileName)
 	if err := r.scanPosts(); err != nil {
 		return err
 	}
@@ -324,8 +329,12 @@ func (r *postRepository) Delete(ctx context.Context, fileName string) error {
 	// 标记为 self-write 后再 Remove：前端 DeletePostFromFrontend 已经显式 emit
 	// app-site-reload，watcher 不需要对这次 REMOVE 事件重复触发渲染。
 	DefaultWriteGate.MarkSelfWrite(postPath)
-	if err := os.Remove(postPath); err != nil && !os.IsNotExist(err) {
-		return err
+	if err := os.Remove(postPath); err != nil {
+		if !os.IsNotExist(err) {
+			return err
+		}
+		// 文件不在磁盘（已被删/路径不符）——归一后这通常是幂等删除，记一条以防隐性不一致。
+		log.Printf("[postRepo] delete: file already absent on disk: %s", postPath)
 	}
 
 	// Update Cache
@@ -342,6 +351,7 @@ func (r *postRepository) Delete(ctx context.Context, fileName string) error {
 }
 
 func (r *postRepository) GetByFileName(ctx context.Context, fileName string) (*domain.Post, error) {
+	fileName = normalizeFileName(fileName)
 	if err := r.scanPosts(); err != nil {
 		return nil, err
 	}
@@ -404,6 +414,17 @@ func (r *postRepository) saveCacheJSON() {
 	dbPath := filepath.Join(r.appDir, "config", "posts.json")
 	db := map[string]interface{}{"posts": r.cache}
 	_ = SaveJSONFileIdempotent(dbPath, db)
+}
+
+// normalizeFileName 去掉文件名末尾的 .md（含历史遗留的多重 .md）。
+// repo 内部不变量：FileName 始终为裸名——save 写盘时补 .md、parsePost 读盘时去 .md，
+// 二者约定一致。所有外部入口（save / Delete / GetByFileName）先归一，避免调用方
+// 传 "x.md" 造成 "x.md.md" 落盘或缓存键失同步。
+func normalizeFileName(name string) string {
+	for strings.HasSuffix(name, ".md") {
+		name = strings.TrimSuffix(name, ".md")
+	}
+	return name
 }
 
 func (r *postRepository) parsePost(content string, filename string) (domain.Post, error) {
@@ -478,7 +499,7 @@ func (r *postRepository) parsePost(content string, filename string) (domain.Post
 		IsTop:       meta.IsTop,
 		Content:     postContent,
 		Abstract:    abstract,
-		FileName:    strings.TrimSuffix(filename, ".md"),
+		FileName:    normalizeFileName(filename),
 	}
 
 	return post, nil
