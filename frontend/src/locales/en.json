@@ -526,8 +526,6 @@
             "enabled": "On",
             "disabled": "Off",
             "noEnabledPlatforms": "No platforms enabled. Enable a platform below to start deploying.",
-            "exportAsZip": "打包成ZIP",
-            "exportDesc": "Export static site files",
             "export": "Export",
             "exportSuccess": "Site exported:",
             "exportFailed": "Export failed",

@@ -1,5 +1,7 @@
 {
     "common": {
+        "saveSuccess": "Erfolgreich gespeichert",
+        "saveFailed": "Speichern fehlgeschlagen",
         "edit": "Bearbeiten",
         "save": "Speichern",
         "copy": "Kopieren",
@@ -152,7 +154,25 @@
         "addSubmenu": "Untermenü hinzufügen"
     },
     "settings": {
+        "imageHosting": {
+            "title": "Bild-Hosting",
+            "enable": "Bild-Hosting aktivieren",
+            "enableDesc": "Bilder über das S.EE-Bild-Hosting hosten",
+            "apiKey": "API-Schlüssel",
+            "apiKeyPlaceholder": "Geben Sie Ihren S.EE API-Schlüssel ein",
+            "apiKeyDesc": "Holen Sie sich Ihren API-Schlüssel im S.EE-Dashboard",
+            "imageBrowser": "Bildbrowser",
+            "refresh": "Aktualisieren",
+            "loading": "Wird geladen...",
+            "noImages": "Keine Bilder",
+            "copied": "Bild-URL in die Zwischenablage kopiert",
+            "copyFailed": "Kopieren fehlgeschlagen",
+            "deleteSuccess": "Erfolgreich gelöscht",
+            "deleteFailed": "Löschen fehlgeschlagen"
+        },
         "basic": {
+            "katexEnabled": "KaTeX-Formelrendering",
+            "katexEnabledDesc": "Rendert $...$ und $$...$$ als Formeln; das KaTeX-Stylesheet wird automatisch eingebunden",
             "title": "Grundeinstellungen",
             "siteName": "Seitenname",
             "siteAuthor": "Seitenautor",
@@ -420,6 +440,14 @@
             "saveFailed": "Speichern der Benachrichtigungseinstellungen fehlgeschlagen"
         },
         "network": {
+            "multiPlatformHint": "Sie können mehrere Plattformen gleichzeitig aktivieren. Beim Deployment wird auf allen aktivierten Plattformen veröffentlicht.",
+            "enabled": "Ein",
+            "disabled": "Aus",
+            "noEnabledPlatforms": "Keine Plattform aktiviert. Aktivieren Sie unten eine Plattform, um mit dem Deployment zu beginnen.",
+            "export": "Exportieren",
+            "exportSuccess": "Website exportiert:",
+            "exportFailed": "Export fehlgeschlagen",
+            "authTimeout": "Autorisierung abgelaufen, bitte erneut versuchen",
             "title": "Server",
             "platform": "Plattform",
             "domain": "Domain",
