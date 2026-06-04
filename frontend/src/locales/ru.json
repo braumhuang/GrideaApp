@@ -501,8 +501,6 @@
             "disconnect": "Отключить",
             "configure": "Настроить",
             "editConfig": "Изменить",
-            "setAsActive": "Использовать",
-            "activeLabel": "Активна",
             "currentPlatform": "Текущая платформа",
             "otherPlatforms": "Другие платформы",
             "waitingAuth": "Авторизация...",

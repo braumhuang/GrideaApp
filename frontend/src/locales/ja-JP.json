@@ -501,8 +501,6 @@
             "disconnect": "切断",
             "configure": "設定",
             "editConfig": "編集",
-            "setAsActive": "使用する",
-            "activeLabel": "使用中",
             "currentPlatform": "現在のプラットフォーム",
             "otherPlatforms": "その他",
             "waitingAuth": "認証中...",

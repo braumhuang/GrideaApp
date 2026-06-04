@@ -501,8 +501,6 @@
             "disconnect": "Desconectar",
             "configure": "Configurar",
             "editConfig": "Editar",
-            "setAsActive": "Usar este",
-            "activeLabel": "Activo",
             "currentPlatform": "Plataforma actual",
             "otherPlatforms": "Otras plataformas",
             "waitingAuth": "Autorizando...",

@@ -501,8 +501,6 @@
             "disconnect": "연결 해제",
             "configure": "설정",
             "editConfig": "편집",
-            "setAsActive": "사용",
-            "activeLabel": "사용 중",
             "currentPlatform": "현재 플랫폼",
             "otherPlatforms": "기타 플랫폼",
             "waitingAuth": "인증 중...",

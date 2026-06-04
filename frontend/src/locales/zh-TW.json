@@ -501,8 +501,6 @@
             "disconnect": "中斷連接",
             "configure": "設定",
             "editConfig": "編輯設定",
-            "setAsActive": "設為目前",
-            "activeLabel": "目前使用",
             "currentPlatform": "目前平台",
             "otherPlatforms": "其他平台",
             "waitingAuth": "等待授權...",
