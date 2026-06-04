@@ -21,17 +21,17 @@ type ImageHostingFile struct {
 }
 
 type ImageHostingListResponse struct {
-	Code    int                 `json:"code"`
-	Data    []ImageHostingFile  `json:"data"`
-	Message string              `json:"message"`
-	Success bool                `json:"success"`
+	Code    int                `json:"code"`
+	Data    []ImageHostingFile `json:"data"`
+	Message string             `json:"message"`
+	Success bool               `json:"success"`
 }
 
 type ImageHostingUploadResponse struct {
-	Code    int               `json:"code"`
-	Data    ImageHostingFile  `json:"data"`
-	Message string            `json:"message"`
-	Success bool              `json:"success"`
+	Code    int              `json:"code"`
+	Data    ImageHostingFile `json:"data"`
+	Message string           `json:"message"`
+	Success bool             `json:"success"`
 }
 
 type ImageHostingDeleteResponse struct {

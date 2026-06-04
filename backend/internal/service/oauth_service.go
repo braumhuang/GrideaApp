@@ -324,7 +324,7 @@ func (s *OAuthService) runCallbackServer(ctx context.Context, listener net.Liste
 
 // sensitiveFieldsByPlatform 同 domain.SensitiveFields，此处冗余以避免包循环引用
 var sensitiveFieldsByPlatform = map[string][]string{
-	"github":  {"token"},
+	"github": {"token"},
 
 	"coding":  {"token"},
 	"netlify": {"netlifyAccessToken"},
@@ -356,4 +356,3 @@ func generateOAuthState() (string, error) {
 	}
 	return hex.EncodeToString(b), nil
 }
-

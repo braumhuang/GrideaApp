@@ -102,8 +102,8 @@ func (s *DeployService) DeployToRemote(ctx context.Context) (err error) {
 		notifyPlatform := platform
 		notifyDomain := siteDomain
 		if len(deployedPlatforms) > 1 {
-		notifyPlatform = strings.Join(deployedPlatforms, " / ")
-		notifyDomain = fmt.Sprintf("%d 个平台", len(deployedPlatforms))
+			notifyPlatform = strings.Join(deployedPlatforms, " / ")
+			notifyDomain = fmt.Sprintf("%d 个平台", len(deployedPlatforms))
 		}
 		// 部署结束（成功 / 失败 / 取消）后发系统通知中心；偏好关闭则跳过。
 		s.notifyDeployResult(err, time.Since(startedAt), notifyPlatform, notifyDomain)
@@ -336,5 +336,5 @@ type CdnUploadResultShape interface {
 
 // 让 UploadResult 满足 CdnUploadResultShape —— 方法放这里是为了让阈值函数能在
 // 同一个 service 包内引用，不需要暴露到 domain 层。
-func (r UploadResult) GetTotal() int                 { return r.Total }
-func (r UploadResult) GetFailures() []UploadFailure  { return r.Failures }
+func (r UploadResult) GetTotal() int                { return r.Total }
+func (r UploadResult) GetFailures() []UploadFailure { return r.Failures }

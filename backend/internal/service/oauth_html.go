@@ -113,7 +113,7 @@ func isZhLang(lang string) bool {
 }
 
 var platformDisplayNames = map[string]string{
-	"github":  "GitHub",
+	"github": "GitHub",
 
 	"netlify": "Netlify",
 	"vercel":  "Vercel",

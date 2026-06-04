@@ -197,84 +197,84 @@ func init() {
 
 	Providers = map[string]*Provider{
 		"github": {
-		ID:           "github",
-		AuthURL:      "https://github.com/login/oauth/authorize",
-		TokenURL:     "https://github.com/login/oauth/access_token",
-		UserInfoURL:  "https://api.github.com/user",
-		ClientID:     githubClientID,
-		ClientSecret: githubClientSecret,
-		Scopes:       []string{"public_repo", "read:user", "user:email"},
-		UserInfoParser: func(body []byte) UserInfo {
-			var v struct {
-				Login     string `json:"login"`
-				AvatarURL string `json:"avatar_url"`
-				Email     string `json:"email"`
-			}
-			json.Unmarshal(body, &v)
-			return UserInfo{Username: v.Login, AvatarURL: v.AvatarURL, Email: v.Email}
+			ID:           "github",
+			AuthURL:      "https://github.com/login/oauth/authorize",
+			TokenURL:     "https://github.com/login/oauth/access_token",
+			UserInfoURL:  "https://api.github.com/user",
+			ClientID:     githubClientID,
+			ClientSecret: githubClientSecret,
+			Scopes:       []string{"public_repo", "read:user", "user:email"},
+			UserInfoParser: func(body []byte) UserInfo {
+				var v struct {
+					Login     string `json:"login"`
+					AvatarURL string `json:"avatar_url"`
+					Email     string `json:"email"`
+				}
+				json.Unmarshal(body, &v)
+				return UserInfo{Username: v.Login, AvatarURL: v.AvatarURL, Email: v.Email}
+			},
+			Bootstrap: ensureGitHubRepo,
 		},
-		Bootstrap: ensureGitHubRepo,
-	},
-	"netlify": {
-		ID:           "netlify",
-		AuthURL:      "https://app.netlify.com/authorize",
-		TokenURL:     "https://api.netlify.com/oauth/token",
-		UserInfoURL:  "https://api.netlify.com/api/v1/user",
-		ClientID:     netlifyClientID,
-		ClientSecret: netlifyClientSecret,
-		Scopes:       []string{},
-		// Netlify 要求回调地址完全匹配，使用固定端口
-		FixedPort: 53684,
-		Bootstrap: ensureNetlifySite,
-		UserInfoParser: func(body []byte) UserInfo {
-			var v struct {
-				Email     string `json:"email"`
-				FullName  string `json:"full_name"`
-				AvatarURL string `json:"avatar_url"`
-			}
-			json.Unmarshal(body, &v)
-			name := v.FullName
-			if name == "" {
-				name = v.Email
-			}
-			return UserInfo{Username: name, AvatarURL: v.AvatarURL, Email: v.Email}
+		"netlify": {
+			ID:           "netlify",
+			AuthURL:      "https://app.netlify.com/authorize",
+			TokenURL:     "https://api.netlify.com/oauth/token",
+			UserInfoURL:  "https://api.netlify.com/api/v1/user",
+			ClientID:     netlifyClientID,
+			ClientSecret: netlifyClientSecret,
+			Scopes:       []string{},
+			// Netlify 要求回调地址完全匹配，使用固定端口
+			FixedPort: 53684,
+			Bootstrap: ensureNetlifySite,
+			UserInfoParser: func(body []byte) UserInfo {
+				var v struct {
+					Email     string `json:"email"`
+					FullName  string `json:"full_name"`
+					AvatarURL string `json:"avatar_url"`
+				}
+				json.Unmarshal(body, &v)
+				name := v.FullName
+				if name == "" {
+					name = v.Email
+				}
+				return UserInfo{Username: name, AvatarURL: v.AvatarURL, Email: v.Email}
+			},
 		},
-	},
-	"vercel": {
-		ID:           "vercel",
-		AuthURL:      "https://vercel.com/integrations/" + vercelIntegrationSlug + "/new",
-		TokenURL:     "https://api.vercel.com/v2/oauth/access_token",
-		UserInfoURL:  "https://api.vercel.com/v2/user",
-		ClientID:     vercelClientID,
-		ClientSecret: vercelClientSecret,
-		// Vercel Integration 的 redirect URL 必须与在 Vercel 后台注册的完全一致（含端口）
-		FixedPort: 53683,
-		// Vercel Integration 的授权 URL 不使用标准 OAuth 参数，仅需 state
-		CustomBuildAuthURL: func(p *Provider, redirectURI, state string) string {
-			return p.AuthURL + "?state=" + state
+		"vercel": {
+			ID:           "vercel",
+			AuthURL:      "https://vercel.com/integrations/" + vercelIntegrationSlug + "/new",
+			TokenURL:     "https://api.vercel.com/v2/oauth/access_token",
+			UserInfoURL:  "https://api.vercel.com/v2/user",
+			ClientID:     vercelClientID,
+			ClientSecret: vercelClientSecret,
+			// Vercel Integration 的 redirect URL 必须与在 Vercel 后台注册的完全一致（含端口）
+			FixedPort: 53683,
+			// Vercel Integration 的授权 URL 不使用标准 OAuth 参数，仅需 state
+			CustomBuildAuthURL: func(p *Provider, redirectURI, state string) string {
+				return p.AuthURL + "?state=" + state
+			},
+			UserInfoParser: func(body []byte) UserInfo {
+				var wrapper struct {
+					User struct {
+						Username string `json:"username"`
+						Name     string `json:"name"`
+						Email    string `json:"email"`
+						Avatar   string `json:"avatar"`
+					} `json:"user"`
+				}
+				json.Unmarshal(body, &wrapper)
+				name := wrapper.User.Username
+				if name == "" {
+					name = wrapper.User.Name
+				}
+				// Vercel 官方头像 URL 格式：根据 username 获取
+				avatarURL := ""
+				if name != "" {
+					avatarURL = "https://vercel.com/api/www/avatar/" + name + "?s=160"
+				}
+				return UserInfo{Username: name, AvatarURL: avatarURL, Email: wrapper.User.Email}
+			},
 		},
-		UserInfoParser: func(body []byte) UserInfo {
-			var wrapper struct {
-				User struct {
-					Username string `json:"username"`
-					Name     string `json:"name"`
-					Email    string `json:"email"`
-					Avatar   string `json:"avatar"`
-				} `json:"user"`
-			}
-			json.Unmarshal(body, &wrapper)
-			name := wrapper.User.Username
-			if name == "" {
-				name = wrapper.User.Name
-			}
-			// Vercel 官方头像 URL 格式：根据 username 获取
-			avatarURL := ""
-			if name != "" {
-				avatarURL = "https://vercel.com/api/www/avatar/" + name + "?s=160"
-			}
-			return UserInfo{Username: name, AvatarURL: avatarURL, Email: wrapper.User.Email}
-		},
-	},
 	}
 }
 

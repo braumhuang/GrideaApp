@@ -10,9 +10,9 @@ import (
 )
 
 type imageHostingRepository struct {
-	appDir  string
-	mu      sync.RWMutex
-	cached  *domain.ImageHostingSetting
+	appDir string
+	mu     sync.RWMutex
+	cached *domain.ImageHostingSetting
 }
 
 func NewImageHostingRepository(appDir string) domain.ImageHostingRepository {

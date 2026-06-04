@@ -63,6 +63,7 @@ func ensureGitHubRepo(client *http.Client, token, username string) (map[string]s
 	}
 	return result, nil
 }
+
 // ensureNetlifySite 确保用户有一个可用的 Netlify Site
 // 优先查找现有 sites 中名称包含 "gridea" 的，找不到则创建一个
 // 返回 netlifySiteId 和 domain

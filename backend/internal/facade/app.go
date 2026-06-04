@@ -18,26 +18,26 @@ import (
 var WailsContext context.Context
 
 type AppServices struct {
-	mu         sync.RWMutex
-	Category   *CategoryFacade
-	Post       *PostFacade
-	Menu       *MenuFacade
-	Link       *LinkFacade
-	Tag        *TagFacade
-	Deploy     *DeployFacade
-	Renderer   *RendererFacade
-	Theme      *ThemeFacade
-	Setting    *SettingFacade
-	Comment    *CommentFacade
-	Memo       *MemoFacade
-	Preview    *PreviewFacade
-	SeoSetting *SeoSettingFacade
-	CdnSetting *CdnSettingFacade
-	PwaSetting *PwaSettingFacade
-	CdnUpload  *CdnUploadFacade
-	AI         *AIFacade
-	OAuth       *OAuthFacade
-	Update      *UpdateFacade
+	mu           sync.RWMutex
+	Category     *CategoryFacade
+	Post         *PostFacade
+	Menu         *MenuFacade
+	Link         *LinkFacade
+	Tag          *TagFacade
+	Deploy       *DeployFacade
+	Renderer     *RendererFacade
+	Theme        *ThemeFacade
+	Setting      *SettingFacade
+	Comment      *CommentFacade
+	Memo         *MemoFacade
+	Preview      *PreviewFacade
+	SeoSetting   *SeoSettingFacade
+	CdnSetting   *CdnSettingFacade
+	PwaSetting   *PwaSettingFacade
+	CdnUpload    *CdnUploadFacade
+	AI           *AIFacade
+	OAuth        *OAuthFacade
+	Update       *UpdateFacade
 	ImageHosting *ImageHostingFacade
 	// Internal services for event/update handling
 	Services struct {
@@ -148,25 +148,25 @@ func NewAppServices(appDir string, assets embed.FS) *AppServices {
 
 	// 3. Wrap with Facades
 	return &AppServices{
-		Category:   NewCategoryFacade(categoryService, postRepo),
-		Post:       NewPostFacade(postService),
-		Menu:       NewMenuFacade(menuService),
-		Link:       NewLinkFacade(linkService),
-		Tag:        NewTagFacade(tagService, postRepo),
-		Deploy:     NewDeployFacade(deployService),
-		Renderer:   NewRendererFacade(rendererService),
-		Theme:      NewThemeFacade(themeService),
-		Setting:    NewSettingFacade(settingService, oauthService),
-		Comment:    NewCommentFacade(commentService),
-		Memo:       NewMemoFacade(memoService),
-		Preview:    NewPreviewFacade(previewService),
-		SeoSetting: NewSeoSettingFacade(seoSettingRepo),
-		CdnSetting: NewCdnSettingFacade(cdnSettingRepo),
-		PwaSetting: NewPwaSettingFacade(pwaSettingRepo, appDir),
-		CdnUpload:  NewCdnUploadFacade(cdnUploadService),
-		AI:         NewAIFacade(aiSettingRepo, aiService),
-		OAuth:       NewOAuthFacade(oauthService),
-		Update:      NewUpdateFacade(),
+		Category:     NewCategoryFacade(categoryService, postRepo),
+		Post:         NewPostFacade(postService),
+		Menu:         NewMenuFacade(menuService),
+		Link:         NewLinkFacade(linkService),
+		Tag:          NewTagFacade(tagService, postRepo),
+		Deploy:       NewDeployFacade(deployService),
+		Renderer:     NewRendererFacade(rendererService),
+		Theme:        NewThemeFacade(themeService),
+		Setting:      NewSettingFacade(settingService, oauthService),
+		Comment:      NewCommentFacade(commentService),
+		Memo:         NewMemoFacade(memoService),
+		Preview:      NewPreviewFacade(previewService),
+		SeoSetting:   NewSeoSettingFacade(seoSettingRepo),
+		CdnSetting:   NewCdnSettingFacade(cdnSettingRepo),
+		PwaSetting:   NewPwaSettingFacade(pwaSettingRepo, appDir),
+		CdnUpload:    NewCdnUploadFacade(cdnUploadService),
+		AI:           NewAIFacade(aiSettingRepo, aiService),
+		OAuth:        NewOAuthFacade(oauthService),
+		Update:       NewUpdateFacade(),
 		ImageHosting: NewImageHostingFacade(imageHostingService),
 		Services: struct {
 			Category  *service.CategoryService
