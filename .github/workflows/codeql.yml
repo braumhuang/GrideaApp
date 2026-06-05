@@ -1,0 +1,40 @@
+# CodeQL 深度安全扫描（GitHub 官方，公开仓库免费）：Go + JS/TS 两个语言通道。
+# 结果进仓库 Security → Code scanning，PR 上有新增告警会以 check 形式标出。
+# build-mode: none —— 本仓库根包依赖构建产物无法独立编译，CodeQL 的 Go 无构建模式可绕开。
+name: CodeQL
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  schedule:
+    - cron: "23 3 * * 1" # 每周一全量扫一次，覆盖新披露的漏洞规则
+
+jobs:
+  analyze:
+    name: codeql (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - language: go
+            build-mode: none
+          - language: javascript-typescript
+            build-mode: none
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+
+      - uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:${{ matrix.language }}"
