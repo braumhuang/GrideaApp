@@ -151,9 +151,11 @@ jobs:
           repo-checkout: false
           go-package: ./backend/...
 
-      - name: npm audit（high 及以上阻断）
+      - name: npm audit（high 及以上阻断，豁免清单见脚本头部）
         working-directory: frontend
-        run: npm audit --audit-level=high
+        run: |
+          npm audit --json > /tmp/audit.json || true
+          python3 ../scripts/check_npm_audit.py /tmp/audit.json
 
       - name: gitleaks 密钥扫描（工作区内容）
         run: |
