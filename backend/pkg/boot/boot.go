@@ -281,6 +281,7 @@ func Run(assets embed.FS, version string) {
 			services.AI,
 			services.OAuth,
 			services.ImageHosting,
+			services.ImageOptimizeSetting,
 			services.Update,
 		},
 		Windows: &windows.Options{

@@ -197,6 +197,8 @@
             "feedEnabledDesc": "When off, feed.xml will not be generated",
             "katexEnabled": "KaTeX Math Rendering",
             "katexEnabledDesc": "Render $...$ and $$...$$ as formulas; KaTeX stylesheet is auto-injected",
+            "webpConvert": "Auto Convert to WebP",
+            "webpConvertDesc": "Automatically compress and convert uploaded images to WebP format",
             "rssArticles": "Number articles RSS/Feed",
             "favicon": "Favicon setting",
             "avatar": "Avatar setting",

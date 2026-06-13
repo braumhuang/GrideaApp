@@ -173,6 +173,8 @@
         "basic": {
             "katexEnabled": "Rendering formule KaTeX",
             "katexEnabledDesc": "Rende $...$ e $$...$$ come formule; il foglio di stile KaTeX viene iniettato automaticamente",
+            "webpConvert": "Conversione automatica in WebP",
+            "webpConvertDesc": "Comprimi e converti automaticamente le immagini caricate in formato WebP",
             "title": "Impostazioni di base",
             "siteName": "Nome sito",
             "siteAuthor": "Autore sito",

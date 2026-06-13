@@ -197,6 +197,8 @@
       "feedEnabledDesc": "关闭后将不会生成 feed.xml",
       "katexEnabled": "KaTeX 公式渲染",
       "katexEnabledDesc": "文章中 $...$ 与 $$...$$ 会被渲染成公式，并自动注入 KaTeX 样式",
+      "webpConvert": "自动转为 WebP",
+      "webpConvertDesc": "上传图片时自动压缩并转换为 WebP 格式，减小文件体积",
       "rssArticles": "RSS/Feed 文章数量",
       "favicon": "网页图标",
       "avatar": "头像配置",

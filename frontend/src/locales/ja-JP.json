@@ -173,6 +173,8 @@
         "basic": {
             "katexEnabled": "KaTeX 数式レンダリング",
             "katexEnabledDesc": "記事内の $...$ と $$...$$ を数式としてレンダリングし、KaTeX のスタイルを自動的に読み込みます",
+            "webpConvert": "自動WebP変換",
+            "webpConvertDesc": "アップロードした画像を自動的に圧縮しWebP形式に変換します",
             "title": "基本設定",
             "siteName": "サイト名",
             "siteAuthor": "サイト管理者",

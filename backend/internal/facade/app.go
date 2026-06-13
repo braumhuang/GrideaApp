@@ -18,27 +18,28 @@ import (
 var WailsContext context.Context
 
 type AppServices struct {
-	mu           sync.RWMutex
-	Category     *CategoryFacade
-	Post         *PostFacade
-	Menu         *MenuFacade
-	Link         *LinkFacade
-	Tag          *TagFacade
-	Deploy       *DeployFacade
-	Renderer     *RendererFacade
-	Theme        *ThemeFacade
-	Setting      *SettingFacade
-	Comment      *CommentFacade
-	Memo         *MemoFacade
-	Preview      *PreviewFacade
-	SeoSetting   *SeoSettingFacade
-	CdnSetting   *CdnSettingFacade
-	PwaSetting   *PwaSettingFacade
-	CdnUpload    *CdnUploadFacade
-	AI           *AIFacade
-	OAuth        *OAuthFacade
-	Update       *UpdateFacade
-	ImageHosting *ImageHostingFacade
+	mu                   sync.RWMutex
+	Category             *CategoryFacade
+	Post                 *PostFacade
+	Menu                 *MenuFacade
+	Link                 *LinkFacade
+	Tag                  *TagFacade
+	Deploy               *DeployFacade
+	Renderer             *RendererFacade
+	Theme                *ThemeFacade
+	Setting              *SettingFacade
+	Comment              *CommentFacade
+	Memo                 *MemoFacade
+	Preview              *PreviewFacade
+	SeoSetting           *SeoSettingFacade
+	CdnSetting           *CdnSettingFacade
+	PwaSetting           *PwaSettingFacade
+	CdnUpload            *CdnUploadFacade
+	AI                   *AIFacade
+	OAuth                *OAuthFacade
+	Update               *UpdateFacade
+	ImageHosting         *ImageHostingFacade
+	ImageOptimizeSetting *ImageOptimizeSettingFacade
 	// Internal services for event/update handling
 	Services struct {
 		Category  *service.CategoryService
@@ -77,14 +78,15 @@ func (s *AppServices) Startup(ctx context.Context) {
 
 func NewAppServices(appDir string, assets embed.FS) *AppServices {
 	// 1. Init Repositories
-	postRepo := repository.NewPostRepository(appDir)
+	imageOptimizeSettingRepo := repository.NewImageOptimizeSettingRepository(appDir)
+	postRepo := repository.NewPostRepository(appDir, imageOptimizeSettingRepo)
 	categoryRepo := repository.NewCategoryRepository(appDir)
 	tagRepo := repository.NewTagRepository(appDir)
 	menuRepo := repository.NewMenuRepository(appDir)
 	linkRepo := repository.NewLinkRepository(appDir)
 	themeRepo := repository.NewThemeRepository(appDir)
 	settingRepo := repository.NewSettingRepository(appDir)
-	mediaRepo := repository.NewMediaRepository(appDir)
+	mediaRepo := repository.NewMediaRepository(appDir, imageOptimizeSettingRepo)
 	memoRepo := repository.NewMemoRepository(appDir)
 	seoSettingRepo := repository.NewSeoSettingRepository(appDir)
 	cdnSettingRepo := repository.NewCdnSettingRepository(appDir)
@@ -148,26 +150,27 @@ func NewAppServices(appDir string, assets embed.FS) *AppServices {
 
 	// 3. Wrap with Facades
 	return &AppServices{
-		Category:     NewCategoryFacade(categoryService, postRepo),
-		Post:         NewPostFacade(postService),
-		Menu:         NewMenuFacade(menuService),
-		Link:         NewLinkFacade(linkService),
-		Tag:          NewTagFacade(tagService, postRepo),
-		Deploy:       NewDeployFacade(deployService),
-		Renderer:     NewRendererFacade(rendererService),
-		Theme:        NewThemeFacade(themeService),
-		Setting:      NewSettingFacade(settingService, oauthService),
-		Comment:      NewCommentFacade(commentService),
-		Memo:         NewMemoFacade(memoService),
-		Preview:      NewPreviewFacade(previewService),
-		SeoSetting:   NewSeoSettingFacade(seoSettingRepo),
-		CdnSetting:   NewCdnSettingFacade(cdnSettingRepo),
-		PwaSetting:   NewPwaSettingFacade(pwaSettingRepo, appDir),
-		CdnUpload:    NewCdnUploadFacade(cdnUploadService),
-		AI:           NewAIFacade(aiSettingRepo, aiService),
-		OAuth:        NewOAuthFacade(oauthService),
-		Update:       NewUpdateFacade(),
-		ImageHosting: NewImageHostingFacade(imageHostingService),
+		Category:             NewCategoryFacade(categoryService, postRepo),
+		Post:                 NewPostFacade(postService),
+		Menu:                 NewMenuFacade(menuService),
+		Link:                 NewLinkFacade(linkService),
+		Tag:                  NewTagFacade(tagService, postRepo),
+		Deploy:               NewDeployFacade(deployService),
+		Renderer:             NewRendererFacade(rendererService),
+		Theme:                NewThemeFacade(themeService),
+		Setting:              NewSettingFacade(settingService, oauthService),
+		Comment:              NewCommentFacade(commentService),
+		Memo:                 NewMemoFacade(memoService),
+		Preview:              NewPreviewFacade(previewService),
+		SeoSetting:           NewSeoSettingFacade(seoSettingRepo),
+		CdnSetting:           NewCdnSettingFacade(cdnSettingRepo),
+		PwaSetting:           NewPwaSettingFacade(pwaSettingRepo, appDir),
+		CdnUpload:            NewCdnUploadFacade(cdnUploadService),
+		AI:                   NewAIFacade(aiSettingRepo, aiService),
+		OAuth:                NewOAuthFacade(oauthService),
+		Update:               NewUpdateFacade(),
+		ImageHosting:         NewImageHostingFacade(imageHostingService),
+		ImageOptimizeSetting: NewImageOptimizeSettingFacade(imageOptimizeSettingRepo),
 		Services: struct {
 			Category  *service.CategoryService
 			Post      *service.PostService
@@ -276,6 +279,7 @@ func (s *AppServices) UpdateAppDir(appDir string) {
 	s.OAuth.service.SetSettingRepo(newServices.Repositories.Setting)
 	// ImageHosting repo doesn't have state that needs migration, but keep reference fresh
 	s.ImageHosting = newServices.ImageHosting
+	s.ImageOptimizeSetting.repo = newServices.ImageOptimizeSetting.repo
 	// Scaffold service doesn't need update generally, but good to keep in sync
 	s.Services.Scaffold = newServices.Services.Scaffold
 	s.Services.Comment = newServices.Services.Comment

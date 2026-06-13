@@ -79,7 +79,7 @@ func TestCopyFileSamePathDoesNotTruncate(t *testing.T) {
 func TestPostRepositoryUpdateKeepsExistingFeatureImage(t *testing.T) {
 	ctx := context.Background()
 	appDir := t.TempDir()
-	repo := NewPostRepository(appDir)
+	repo := NewPostRepository(appDir, nil)
 
 	src := filepath.Join(t.TempDir(), "source-cover.png")
 	original := []byte("stable cover image bytes")

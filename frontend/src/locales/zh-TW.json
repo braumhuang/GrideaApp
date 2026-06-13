@@ -173,6 +173,8 @@
         "basic": {
             "katexEnabled": "KaTeX 公式渲染",
             "katexEnabledDesc": "文章中 $...$ 與 $$...$$ 會被渲染成公式，並自動注入 KaTeX 樣式",
+            "webpConvert": "自動轉為 WebP",
+            "webpConvertDesc": "上傳圖片時自動壓縮並轉換為 WebP 格式，縮小檔案大小",
             "title": "基礎設定",
             "siteName": "網站名稱",
             "siteAuthor": "網站作者",

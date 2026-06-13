@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"gridea-pro/backend/internal/domain"
+	"gridea-pro/backend/internal/webpconvert"
 	"log"
 	"os"
 	"path/filepath"
@@ -20,17 +21,19 @@ import (
 )
 
 type postRepository struct {
-	mu     sync.RWMutex
-	appDir string
-	cache  []domain.Post
-	loaded bool
+	mu           sync.RWMutex
+	appDir       string
+	cache        []domain.Post
+	loaded       bool
+	imageOptRepo domain.ImageOptimizeSettingRepository // 可为 nil（如 MCP 场景），nil 时 WebP 转换禁用
 }
 
-func NewPostRepository(appDir string) domain.PostRepository {
+func NewPostRepository(appDir string, imageOptRepo domain.ImageOptimizeSettingRepository) domain.PostRepository {
 	return &postRepository{
-		appDir: appDir,
-		cache:  make([]domain.Post, 0),
-		loaded: false,
+		appDir:       appDir,
+		cache:        make([]domain.Post, 0),
+		loaded:       false,
+		imageOptRepo: imageOptRepo,
 	}
 }
 
@@ -179,12 +182,23 @@ func (r *postRepository) save(ctx context.Context, post *domain.Post, isUpdate b
 
 	// Handle Image Copy
 	if post.FeatureImage.Name != "" && post.FeatureImage.Path != "" {
+		srcPath := post.FeatureImage.Path
 		ext := filepath.Ext(post.FeatureImage.Name)
+
+		// 如果启用了 WebP 转换且格式支持，先转换
+		if webpEnabled, webpQuality := GetWebpSetting(r.imageOptRepo, ctx); webpEnabled && webpconvert.NeedsConversion(srcPath) {
+			if tmpPath, err := webpconvert.ConvertToWebP(srcPath, webpQuality); err == nil && tmpPath != "" {
+				srcPath = tmpPath
+				ext = ".webp"
+				defer os.Remove(tmpPath) // 清理临时文件
+			}
+		}
+
 		newPath := filepath.Join(postImageDir, post.FileName+ext)
 		// 源路径与目标路径相同时跳过复制，避免 CopyFile 将文件截断为 0 字节
-		if sameFilePath(post.FeatureImage.Path, newPath) {
+		if sameFilePath(srcPath, newPath) {
 			feature = "/post-images/" + post.FileName + ext
-		} else if err := CopyFile(post.FeatureImage.Path, newPath); err == nil {
+		} else if err := CopyFile(srcPath, newPath); err == nil {
 			feature = "/post-images/" + post.FileName + ext
 			if pathInsideDir(post.FeatureImage.Path, postImageDir) {
 				_ = os.Remove(post.FeatureImage.Path)
