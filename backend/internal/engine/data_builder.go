@@ -647,7 +647,7 @@ func (b *TemplateDataBuilder) buildMemoViews(ctx context.Context, config domain.
 	var views []template.MemoView
 	for _, m := range memos {
 		// 将 Markdown 内容转为 HTML
-		htmlContent := utils.ToHTML(m.Content)
+		htmlContent := utils.ToHTMLUnsafe(m.Content)
 
 		// 格式化时间
 		formatted := formatDate(m.CreatedAt, dateFormat)

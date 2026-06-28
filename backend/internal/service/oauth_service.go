@@ -324,12 +324,15 @@ func (s *OAuthService) runCallbackServer(ctx context.Context, listener net.Liste
 
 // sensitiveFieldsByPlatform 同 domain.SensitiveFields，此处冗余以避免包循环引用
 var sensitiveFieldsByPlatform = map[string][]string{
+	/*
 	"github":  {"token"},
 
 	"coding":  {"token"},
 	"netlify": {"netlifyAccessToken"},
 	"vercel":  {"token"},
 	"sftp":    {"password", "privateKey"},
+	*/
+	"github": {}, "coding": {}, "netlify": {}, "vercel": {}, "sftp": {},
 }
 
 func getAllCredentialFields(providerID string) []string {

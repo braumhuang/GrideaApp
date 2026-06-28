@@ -35,11 +35,14 @@ func (s *Setting) IsDeployNotifyEnabled() bool {
 // SensitiveFields 各平台需要存入 Keychain 的敏感字段
 // key: 平台 ID，value: 字段名列表
 var SensitiveFields = map[string][]string{
+	/*
 	"github":  {"token"},
 	"coding":  {"token"},
 	"netlify": {"netlifyAccessToken"},
 	"vercel":  {"token"},
 	"sftp":    {"password", "privateKey"},
+	*/
+	"github": {}, "coding": {}, "netlify": {}, "vercel": {}, "sftp": {},
 }
 
 // ExtractSensitiveFields 从 PlatformConfigs 中提取敏感字段

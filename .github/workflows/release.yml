@@ -29,7 +29,7 @@ run-name: ${{ github.ref_type == 'tag' && format('Release {0}', github.ref_name)
 on:
   push:
     tags:
-      - "v*"
+      - "ver*"
   workflow_dispatch:
 
 env:
@@ -106,7 +106,7 @@ jobs:
           # 把 git tag (去掉前导 v) 写入 wails.json，Wails build 会把它烤进
           # macOS Info.plist 的 CFBundleShortVersionString / Windows 资源版本。
           # 这是 Wails 框架强制的真源——没有 ldflags 通道。
-          VER="${VERSION#v}"
+          VER="${VERSION#ver}"
           node -e "
             const fs = require('fs');
             const j = JSON.parse(fs.readFileSync('wails.json', 'utf8'));
@@ -118,7 +118,7 @@ jobs:
       - name: Build macOS ${{ matrix.arch }}
         shell: bash
         run: |
-          LDFLAGS="-X main.Version=${VERSION#v}"
+          LDFLAGS="-X main.Version=${VERSION#ver}"
           LDFLAGS="${LDFLAGS} -X gridea-pro/backend/internal/service/oauth.githubClientID=${GH_OAUTH_CLIENT_ID}"
           LDFLAGS="${LDFLAGS} -X gridea-pro/backend/internal/service/oauth.githubClientSecret=${GH_OAUTH_CLIENT_SECRET}"
           LDFLAGS="${LDFLAGS} -X gridea-pro/backend/internal/service/oauth.netlifyClientID=${NETLIFY_CLIENT_ID}"
@@ -241,7 +241,7 @@ jobs:
       - name: Patch wails.json productVersion
         shell: bash
         run: |
-          VER="${VERSION#v}"
+          VER="${VERSION#ver}"
           node -e "
             const fs = require('fs');
             const j = JSON.parse(fs.readFileSync('wails.json', 'utf8'));
@@ -255,13 +255,13 @@ jobs:
         run: |
           choco install innosetup -y
           $langDir = "C:\Program Files (x86)\Inno Setup 6\Languages"
-          $langUrl = "https://raw.githubusercontent.com/jrsoftware/issrc/main/Files/Languages/Unofficial/ChineseSimplified.isl"
+          $langUrl = "https://raw.githubusercontent.com/jrsoftware/issrc/main/Files/Languages/ChineseSimplified.isl"
           Invoke-WebRequest -Uri $langUrl -OutFile "$langDir\ChineseSimplified.isl"
 
       - name: Build Windows ${{ matrix.arch }}
         shell: bash
         run: |
-          LDFLAGS="-X main.Version=${VERSION#v}"
+          LDFLAGS="-X main.Version=${VERSION#ver}"
           LDFLAGS="${LDFLAGS} -X gridea-pro/backend/internal/service/oauth.githubClientID=${GH_OAUTH_CLIENT_ID}"
           LDFLAGS="${LDFLAGS} -X gridea-pro/backend/internal/service/oauth.githubClientSecret=${GH_OAUTH_CLIENT_SECRET}"
           LDFLAGS="${LDFLAGS} -X gridea-pro/backend/internal/service/oauth.netlifyClientID=${NETLIFY_CLIENT_ID}"
@@ -285,7 +285,7 @@ jobs:
       - name: Create Inno Setup installer
         shell: pwsh
         run: |
-          $version = "${{ env.VERSION }}".TrimStart("v")
+          $version = "${{ env.VERSION }}".TrimStart("ver")
           $arch = "${{ matrix.arch }}"
           $innoArch = "${{ matrix.inno_arch }}"
           $outputName = "${{ env.RELEASE_PREFIX }}_${{ env.VERSION }}_windows_${arch}_setup"
@@ -411,7 +411,7 @@ jobs:
       - name: Patch wails.json productVersion
         shell: bash
         run: |
-          VER="${VERSION#v}"
+          VER="${VERSION#ver}"
           node -e "
             const fs = require('fs');
             const j = JSON.parse(fs.readFileSync('wails.json', 'utf8'));
@@ -426,7 +426,7 @@ jobs:
       - name: Build Linux binary
         shell: bash
         run: |
-          LDFLAGS="-X main.Version=${VERSION#v}"
+          LDFLAGS="-X main.Version=${VERSION#ver}"
           LDFLAGS="${LDFLAGS} -X gridea-pro/backend/internal/service/oauth.githubClientID=${GH_OAUTH_CLIENT_ID}"
           LDFLAGS="${LDFLAGS} -X gridea-pro/backend/internal/service/oauth.githubClientSecret=${GH_OAUTH_CLIENT_SECRET}"
           LDFLAGS="${LDFLAGS} -X gridea-pro/backend/internal/service/oauth.netlifyClientID=${NETLIFY_CLIENT_ID}"
@@ -450,7 +450,7 @@ jobs:
       - name: Prepare packaging files
         run: |
           SLUG="${{ env.BIN_SLUG }}"
-          DEB_VERSION="${VERSION#v}"
+          DEB_VERSION="${VERSION#ver}"
 
           # .desktop 文件
           cat > ${SLUG}.desktop << EOF

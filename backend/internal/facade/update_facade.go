@@ -40,7 +40,7 @@ type UpdateFacade struct {
 // NewUpdateFacade 创建 UpdateFacade
 func NewUpdateFacade() *UpdateFacade {
 	return &UpdateFacade{
-		releasesURL: "https://api.github.com/repos/Gridea-Pro/gridea-pro/releases/latest",
+		releasesURL: "https://api.github.com/repos/braumhuang/GrideaApp/releases/latest",
 		httpClient:  &http.Client{Timeout: 30 * time.Second},
 	}
 }
@@ -49,7 +49,7 @@ func NewUpdateFacade() *UpdateFacade {
 // 即便 Release 的 browser_download_url 字段被篡改指向第三方域，也会被这里拦掉。
 // 运行期 / 构建期都不要修改；只有单元测试会临时覆盖它以驱动 httptest 服务器
 // （用 var 而非 const 是为了便于这种覆盖，生产代码从不写它）。
-var trustedDownloadPrefix = "https://github.com/Gridea-Pro/gridea-pro/releases/download/"
+var trustedDownloadPrefix = "https://github.com/braumhuang/GrideaApp/releases/download/"
 
 // isTrustedDownloadURL 校验 URL 前缀是否在白名单内。
 func isTrustedDownloadURL(url string) bool {
